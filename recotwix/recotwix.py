@@ -6,6 +6,7 @@ import numpy as np
 import nibabel as nib
 from bart import bart
 from tqdm import tqdm
+from pytools import plot
 
 cfl_order = [
     'READ_DIM',
@@ -64,11 +65,12 @@ def fftnd(img:torch.Tensor, axes=[-1]):
 # adapting to bart CFL format, see https://bart-doc.readthedocs.io/en/latest/data.html or https://github.com/mrirecon/bart/blob/master/src/misc/mri.h
 # Dimensions in BART (/src/misc/mri.h): [READ_DIM, PHS1_DIM, PHS2_DIM, COIL_DIM, MAPS_DIM, TE_DIM, COEFF_DIM, COEFF2_DIM, ITER_DIM, CSHIFT_DIM, TIME_DIM, TIME2_DIM, LEVEL_DIM, SLICE_DIM, AVG_DIM, BATCH_DIM]
 def toBART(kspace:torch.Tensor):
-    return kspace.moveaxis(torch.arange(kspace.ndim), [cfl_order.index(v) for v in dim_map.values()])
+    return torch.movedim(kspace, torch.arange(kspace.ndim).tolist(), [cfl_order.index(v) for v in dim_map.values()])
 
 # converting BART data format to recoMRD data format
 def fromBART(kspace:torch.Tensor):
-    return kspace.moveaxis(torch.arange(kspace.ndim), [list(cfl_order.values()).index(v) for v in cfl_order])
+    kspace = kspace[(...,) + (None,)*(len(dim_map) - kspace.ndim)] # add extra dims to match original format size if is not already!
+    return torch.movedim(kspace, torch.arange(kspace.ndim).tolist(), [list(dim_map.values()).index(v) for v in cfl_order])
 
 
 class recotwix(): 
@@ -99,76 +101,58 @@ class recotwix():
         self.twixobj = twixtools.read_twix(filename)[-1]
         self.twixmap = twixtools.map_twix(self.twixobj)
 
-        self.scans = []
-        for scan in self.twixmap:
-            if isinstance(self.twixmap[scan], twixtools.twix_array):
-                self.scans.append(scan)
-
-        hdr = self.twixobj['hdr']
-        
-        self.hdr  = hdr
-        self.is3D = True if hdr['MeasYaps']['sKSpace']['ucDimension'] == 4 else False
-        self.Res  = {'x':hdr['MeasYaps']['sKSpace']['lBaseResolution'], 'y':hdr['MeasYaps']['sKSpace']['lPhaseEncodingLines'], 'z':hdr['MeasYaps']['sSliceArray']['lSize']}
-        if self.is3D:
-            self.Res['z'] = hdr['MeasYaps']['sKSpace']['lPartitions']
-
-        self.isParallelImaging   = True if hdr['MeasYaps']['sPat']['ucPATMode'] == 2 else False
-        self.isRefScanSeparate   = True if hdr['MeasYaps']['sPat']['ucRefScanMode'] == 4 else False
-        self.acceleration_factor = [hdr['MeasYaps']['sPat']['lAccelFactPE'], hdr['MeasYaps']['sPat']['lAccelFact3D']]
-        self.isPartialFourierRO  = True if self.Res['x'] - self.twixmap['image'].shape[self.twixmap['image'].dims.index('Col')] > 4 else False
-        self.isPartialFourierPE1 = True if hdr['MeasYaps']['sKSpace']['ucPhasePartialFourier'] != 16 else False
-        self.isPartialFourierPE2 = True if hdr['MeasYaps']['sKSpace']['ucSlicePartialFourier'] != 16 else False
-
-        self.dim_enc  = [self.twixmap['image'].dims.index('Col'), self.twixmap['image'].dims.index('Lin'), self.twixmap['image'].dims.index('Par')]
-        self.dim_free = ('eco', 'rep', 'set', 'seg', 'ave', 'phs')
-        self.dim_size = self.twixmap['image'].shape
-
-        self.dim_info = {}
-        for dim in self.twixmap['image'].dims: # ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Par', 'Sli', 'Ave', 'Lin', 'Cha', 'Col')
-            ind = self.twixmap['image'].dims.index(dim)
-            self.dim_info[dim] = {'ind':ind, 'len':self.dim_size[ind]}
-
         for key in self.twixmap.keys():
             if isinstance(self.twixmap[key], twixtools.twix_array):
                 self.twixmap[key].flags['remove_os'] = True
         self.twixmap['image'].flags['zf_missing_lines'] = True
 
+        self.scans = []
+        for scan in self.twixmap:
+            if isinstance(self.twixmap[scan], twixtools.twix_array):
+                self.scans.append(scan)
+
+        hdr = self.twixobj['hdr']        
+        self.hdr  = hdr
+
+        self.dim_size = self.twixmap['image'].shape
+        self.dim_info = {}
+        for dim in self.twixmap['image'].dims: # ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Par', 'Sli', 'Ave', 'Lin', 'Cha', 'Col')
+            ind = self.twixmap['image'].dims.index(dim)
+            self.dim_info[dim] = {'ind':ind, 'len':self.dim_size[ind]}
+
+        self.is3D = True if hdr['MeasYaps']['sKSpace']['ucDimension'] == 4 else False
+        self.Res  = {'x':hdr['MeasYaps']['sKSpace']['lBaseResolution'], 'y':hdr['MeasYaps']['sKSpace']['lPhaseEncodingLines'], 'z':hdr['MeasYaps']['sSliceArray']['lSize']}
+        if self.is3D:
+            self.Res['z'] = hdr['MeasYaps']['sKSpace']['lPartitions']
+
+        self.dim_enc  = [self.dim_info['Col']['ind'], self.dim_info['Lin']['ind'], self.dim_info['Par']['ind']]
+        self.dim_free = ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Ave')
+        
+
+        self.isParallelImaging   = True if hdr['MeasYaps']['sPat']['ucPATMode'] == 2 else False
+        self.isRefScanSeparate   = True if hdr['MeasYaps']['sPat']['ucRefScanMode'] == 4 else False
+        self.acceleration_factor = [hdr['MeasYaps']['sPat']['lAccelFactPE'], hdr['MeasYaps']['sPat']['lAccelFact3D']]
+        self.isPartialFourierRO  = True if (self.Res['x'] - self.dim_info['Col']['len']) > 4 else False
+        self.isPartialFourierPE1 = True if hdr['MeasYaps']['sKSpace']['ucPhasePartialFourier'] != 16 else False
+        self.isPartialFourierPE2 = True if hdr['MeasYaps']['sKSpace']['ucSlicePartialFourier'] != 16 else False      
+
 
     def __str__(self):
         s = f"\n{self.__class__.__module__}.{self.__class__.__qualname__}:\n"
         s += f"  Scans: {self.scans}\n"
-        s += f"  Dims: {self.dim_info}\n"
-        s += f"  Resolution: {self.Res['x']} {self.Res['y']} {self.Res['z']}\n"
-        s += f"  PartialFourier: {self.isPartialFourierRO} {self.isPartialFourierPE1} {self.isPartialFourierPE2}\n"
+        s += f"  Dims: {list(self.dim_info.keys())}\n"
+        s += f"  Size: {self.dim_size}\n"
+        s += f"  Resolution (x y z): {self.Res['x']} {self.Res['y']} {self.Res['z']}\n"
+        s += f"  PartialFourier (ro, pe, pe3d): {self.isPartialFourierRO} {self.isPartialFourierPE1} {self.isPartialFourierPE2}\n"
         s += f"  isParallelImaging: {self.isParallelImaging}\n"
         s += f"  Acceleration Factor: {self.acceleration_factor}\n"
         return s
-
-
-    def correct_imagescan_size(self, kspace:torch.Tensor, is_os_removed=True):
-        import torch.nn.functional as F
-        col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap['image'].kspace_center_col
-        lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap['image'].kspace_center_lin
-        par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap['image'].kspace_center_par
-
-        col_diff = col_diff//2 if is_os_removed else col_diff
-
-        pad = [0] * kspace.ndim * 2
-        pad[self.dim_info['Col']['ind']*2]   = int(col_diff)
-        pad[self.dim_info['Col']['ind']*2+1] = int(col_diff)
-        pad[self.dim_info['Lin']['ind']*2]   = int(lin_diff)
-        pad[self.dim_info['Lin']['ind']*2+1] = int(lin_diff)
-        pad[self.dim_info['Par']['ind']*2]   = int(par_diff)
-        pad[self.dim_info['Par']['ind']*2+1] = int(par_diff)
-        pad.reverse()
-        return F.pad(kspace, pad, 'constant', 0)
-
 
     def runReco(self, method_sensitivity='caldir'):     
         torch.cuda.empty_cache()   
 
         kspace = torch.from_numpy(self.twixmap['image'][:])
-        kspace = self.correct_imagescan_size(kspace, True)
+        kspace = self.correct_scan_size(kspace, scantype='image')
         # Partial Fourier?
         if self.isPartialFourierRO:
             kspace = self.POCS(kspace, dim_pf=self.dim_info['Col']['ind'])
@@ -180,12 +164,13 @@ class recotwix():
         coils_sensitivity = None
         # Parallel Imaging?
         if self.isParallelImaging:
-            self.twixmap['refscan'].flags['zf_missing_lines'] = True
+            self.twixmap['refscan'].flags['zf_missing_lines'] = False
+            self.twixmap['refscan'].flags['skip_empty_lead']  = True
             acs = torch.from_numpy(self.twixmap['refscan'][:])
+            acs = self.correct_scan_size(acs, scantype='refscan')
             coils_sensitivity = self.calc_coil_sensitivity(acs, method=method_sensitivity)
         else:
             coils_sensitivity = self.calc_coil_sensitivity(kspace, method=method_sensitivity)
-
         self.img = self.coil_combination(kspace, coil_sens=coils_sensitivity)
 
     ##########################################################
@@ -197,11 +182,13 @@ class recotwix():
         if axes is None:
             axes = self.dim_enc
 
-        img = torch.zeros_like(kspace, dtype=kspace.dtype)
+        img = torch.zeros_like(kspace, dtype=kspace.dtype, device=kspace.device)
         # this loop is slow because of order='F' and ind is in the first dimensions. see above, _create_kspace(). 
         for cha in tqdm(range(self.dim_info['Cha']['len']), desc='Fourier transform'):
-            img.index_copy_(self.dim_info['Cha']['ind'], torch.Tensor([cha]).long(), ifftnd(kspace.index_select(self.dim_info['Cha']['ind'], torch.Tensor([cha]).int()), axes=axes)) # [ind] --> https://stackoverflow.com/questions/3551242/
+            img.index_copy_(self.dim_info['Cha']['ind'], torch.Tensor([cha]).long().to(kspace.device), 
+                            ifftnd(kspace.index_select(self.dim_info['Cha']['ind'], torch.Tensor([cha]).int().to(kspace.device)), axes=axes)) 
         return img
+
 
     def image_to_kspace(self, img:torch.Tensor, axes=None):
         if img.ndim != len(self.dim_size):
@@ -210,12 +197,66 @@ class recotwix():
         if axes is None:
             axes = self.dim_enc
 
-        kspace = torch.zeros_like(img, dtype=img.dtype)
+        kspace = torch.zeros_like(img, dtype=img.dtype, device=img.device)
         # this loop is slow because of order='F' and ind is in the first dimensions. see above, _create_kspace(). 
         for cha in tqdm(range(self.dim_info['Cha']['len']), desc='Fourier transform'):
-            kspace.index_copy_(self.dim_info['Cha']['ind'], torch.Tensor([cha]), ifftnd(img.index_select(self.dim_info['Cha']['ind'], torch.Tensor([cha])), axes=axes)) # [ind] --> https://stackoverflow.com/questions/3551242/
+            kspace.index_copy_(self.dim_info['Cha']['ind'], torch.Tensor([cha]).long().to(img.device), 
+                               fftnd(img.index_select(self.dim_info['Cha']['ind'], torch.Tensor([cha]).int().to(img.device)), axes=axes))
         return kspace
 
+    ##########################################################
+    def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
+        # Note: this function suppose oversampling is removed
+        import torch.nn.functional as F
+        os_flag = self.twixmap[scantype].flags['remove_os']
+        self.twixmap[scantype].flags['remove_os'] = False
+        col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap[scantype].kspace_center_col
+        lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap[scantype].kspace_center_lin
+        par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap[scantype].kspace_center_par
+        self.twixmap[scantype].flags['remove_os'] = os_flag # restore oversampling flag
+
+        # There might be asymmetric echo; thus, padding in the left and right differ. Note we suppose asymmetry is in the left side which should be valid in the most cases where shortening echo-time is the goal.
+        col_diff_l = col_diff // 2 # because of oversampling is removed before
+        col_diff_r = self.Res['x'] - kspace.shape[self.dim_info['Col']['ind']] - col_diff_l
+
+        pad = [0] * kspace.ndim * 2
+        pad[self.dim_info['Col']['ind']*2]   = int(col_diff_r)
+        pad[self.dim_info['Col']['ind']*2+1] = int(col_diff_l)
+        pad[self.dim_info['Lin']['ind']*2]   = int(lin_diff)
+        pad[self.dim_info['Lin']['ind']*2+1] = int(lin_diff)
+        pad[self.dim_info['Par']['ind']*2]   = int(par_diff)
+        pad[self.dim_info['Par']['ind']*2+1] = int(par_diff)
+        pad.reverse()
+        return F.pad(kspace, pad, 'constant', 0)
+
+    ##########################################################
+    def calc_coil_sensitivity(self, acs:torch.Tensor, method='caldir'):
+        print('Computing coil sensitivity...')
+        torch.cuda.empty_cache()
+        all_methods = ('espirit', 'caldir')
+        
+        if method.lower() not in all_methods:
+            print(f'Given method is not valid. Choose between {", ".join(all_methods)}')
+            return
+
+        # picking the 0th element of the free dimensions
+        for dim_free in self.dim_free:
+            acs = acs.index_select(self.dim_info[dim_free]['ind'], torch.Tensor([0]).int()) 
+        acs_bart = toBART(acs).numpy() # adapting to bart CFL format
+
+        bart_slc_dim = cfl_order.index('SLICE_DIM')
+        if method.lower() == 'espirit'.lower():
+            coil_sens = bart.bart(1, f'-p {1<<bart_slc_dim} -e {acs_bart.shape[bart_slc_dim]} ecalib -m 1 -d 4', acs_bart)
+            coil_sens = fromBART(torch.from_numpy(coil_sens))
+
+        elif method.lower() == 'caldir'.lower():
+            kernel_size = max([acs.shape[d] for d in self.dim_enc])//2 
+            coil_sens = bart.bart(1, '-p {} -e {} caldir {}'.format(1<<bart_slc_dim, acs_bart.shape[bart_slc_dim], kernel_size), acs_bart)
+            coil_sens = fromBART(torch.from_numpy(coil_sens))
+
+        print('Done!')
+        return coil_sens
+    
     ##########################################################
     def coil_combination(self, kspace:torch.Tensor, coil_sens:torch.Tensor, rss=False):
         print(f'Combining coils... ')
@@ -223,58 +264,24 @@ class recotwix():
         if kspace.ndim != len(self.dim_size):
             print(f'Input size is not valid. {kspace.shape} != {self.dim_size}')
             return
-        
-        if kspace.shape[:self.dim_info['slc']['ind']+1] != coil_sens.shape[:self.dim_info['slc']['ind']+1] :
-            print(f'Coils Sensitivity size is not valid. {kspace.shape} != {coil_sens.shape}')
-            return
-        
+                
         shp = (1,) + kspace.shape[1:] # coil is 1 after combining
         # sos    
         volume       = self.kspace_to_image(kspace)       
-        volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, self.dim_info['cha']['ind'], keepdims=True)) # is needed in 'bart' to calculate scale factor
-        
+        volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, self.dim_info['Cha']['ind'], keepdims=True)) # is needed in 'bart' to calculate scale factor
+        bart_slc_dim = cfl_order.index('SLICE_DIM')
         if rss == False:
             GPU          = '-g' if self.device == 'cuda' else ''
             l2_reg       = 1e-4
-            kspace       = toBART(kspace, self.dim_info)
-            coil_sens    = toBART(coil_sens, self.dim_info)
+            kspace       = toBART(kspace)
+            coil_sens    = toBART(coil_sens)
             scale_factor = torch.quantile(volume_comb, 0.99).tolist()        
-            recon        = bart.bart(1, f'-p {1<<BART_SLICE_DIM} -e {kspace.shape[BART_SLICE_DIM]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
-            volume_comb  = fromBART(torch.from_numpy(recon), self.dim_info, shp)
+            recon        = bart.bart(1, f'-p {1<<bart_slc_dim} -e {kspace.shape[bart_slc_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
+            volume_comb  = fromBART(torch.from_numpy(recon))
             
         print('Done!')
         return volume_comb
 
-    ##########################################################
-    def calc_coil_sensitivity(self, acs:torch.Tensor, method='caldir'):
-        print('Computing coil sensitivity...')
-        torch.cuda.empty_cache()
-        all_methods = ('espirit', 'caldir', 'walsh')
-        
-        if method.lower() not in all_methods:
-            print(f'Given method is not valid. Choose between {", ".join(all_methods)}')
-            return
-        d = self.dim_info
-        if d['cha']['ind']!=0 or d['ro']['ind']!=1 or d['pe1']['ind']!=2 or d['pe2']['ind']!=3 or d['slc']['ind']!=4:
-            print('Error! Dimension order does not fit to the desired order.')
-            return
-
-        # picking the 0th element of the free dimensions
-        for dim_free in self.dim_free:
-            acs = acs.index_select(self.dim_info[dim_free]['ind'], torch.Tensor([0]).int()) 
-        acs_bart = toBART(acs, self.dim_info).numpy() # adapting to bart CFL format
-
-        if method.lower() == 'espirit'.lower():
-            coil_sens = bart.bart(1, f'-p {1<<BART_SLICE_DIM} -e {acs_bart.shape[BART_SLICE_DIM]} ecalib -m 1 -d 4', acs_bart)
-            coil_sens = fromBART(torch.from_numpy(coil_sens), self.dim_info, acs.shape)
-
-        elif method.lower() == 'caldir'.lower():
-            kernel_size = max([acs.shape[d] for d in self.dim_enc])//2
-            coil_sens = bart.bart(1, '-p {} -e {} caldir {}'.format(1<<BART_SLICE_DIM, acs_bart.shape[BART_SLICE_DIM], kernel_size), acs_bart)
-            coil_sens = fromBART(torch.from_numpy(coil_sens), self.dim_info, acs.shape)
-
-        print('Done!')
-        return coil_sens
 
     ##########################################################
     # def compress_coil(self, *kspace:torch.Tensor, virtual_channels=None): 
@@ -298,30 +305,6 @@ class recotwix():
     #     kspace_compressed = [torch.moveaxis(kspc, BART_COIL_DIM, self.dim_info['cha']['ind']) for kspc in kspace_compressed_cfl]
     #     return (*kspace_compressed,)
 
-    ##########################################################
-    # def remove_oversampling(self, img:torch.Tensor, is_kspace=False):
-    #     print('Removing oversampling...')
-    #     torch.cuda.empty_cache()
-    #     if img.ndim != len(self.dim_size):
-    #         print(f'Error! not same dimensionality. {img.shape} vs {self.dim_size}')
-    #         return
-        
-    #     if img.shape[self.dim_info['ro']['ind']] != self.dim_info['ro']['len']:
-    #         print('Oversampling is already removed!')
-    #         return
-        
-    #     if is_kspace:
-    #         os_factor = self.dim_info['ro']['len'] / self.matrix_size['image']['x'] # must be divisible, otherwise I made a mistake somewhere
-    #         ind = torch.arange(0, self.dim_info['ro']['len'], os_factor, dtype=torch.long)
-    #     else:
-    #         cutoff = (img.shape[self.dim_info['ro']['ind']] - self.matrix_size['image']['x']) // 2 # // -> integer division
-    #         ind = torch.arange(cutoff, cutoff+self.matrix_size['image']['x'], dtype=torch.long) # img[:,cutoff:-cutoff,...]
-        
-    #     img = torch.index_select(img, dim=self.dim_info['ro']['ind'], index=ind)
-
-    #     print('Done!')
-    #     return img
-
 
     ##########################################################
     # Partial Fourier using Projection onto Convex Sets
@@ -336,6 +319,7 @@ class recotwix():
         n_full = kspace.shape[dim_pf] 
         # mask for partial Fourier dimension taking accelleration into account
         mask    = torch.sum(torch.abs(kspace), dim_nonpf) > 0 # a mask along PF direction, considering acceleration, type: tensor
+        
         mask_clone = mask.clone()
         ind_one = torch.nonzero(mask == True, as_tuple=True)[0] # index of mask_pf_acc, type: tensor
         acc_pf  = ind_one[1] - ind_one[0] # accelleration in partial Fourier direction
@@ -343,18 +327,17 @@ class recotwix():
         ind_samples = torch.arange(ind_one[-1]+1) # index of samples in PF direction, without acceleration. ind_nopocs does not take accelleration into account, right?
         if ind_one[0] > (mask.numel() - ind_one[-1] - 1): # check which side has more zeros, beginning or end
             ind_samples = torch.arange(ind_one[0], mask.numel())
-
         # mask if there was no accelleration in PF direction
         mask[ind_samples] = True 
         # vector mask for central region
-        mask_sym = mask & torch.flip(mask, dims=[0])      
+        mask_sym = mask & torch.flip(mask, dims=[0])     
         # gaussian mask for central region in partial Fourier dimension
         gauss_pdf = torch.signal.windows.gaussian(n_full, std=10, device=kspace.device) * mask_sym
         # kspace smoothed with gaussian profile and masked central region
         kspace_symmetric = kspace.clone()
         kspace_symmetric = torch.swapaxes(torch.swapaxes(kspace_symmetric, dim_pf, -1) * gauss_pdf, -1, dim_pf)
         angle_image_symmetric  = self.kspace_to_image(kspace_symmetric) 
-        angle_image_symmetric /= torch.abs(angle_image_symmetric) # normalize to unit circle         
+        angle_image_symmetric /= torch.abs(angle_image_symmetric) # normalize to unit circle       
 
         kspace_full = self.kspace_to_image(kspace, axes=dim_nonpf_enc) # along non-pf encoding directions
         kspace_full_clone = kspace_full.clone()

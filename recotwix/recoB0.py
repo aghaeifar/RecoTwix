@@ -6,10 +6,10 @@ from recotwix import recotwix
 from math import pi as PI
 
 class recoB0(recotwix):
-    TE         = 0
-    img_b0      = torch.empty([1])
-    img_mag     = torch.empty([1])    
-    img_mask    = torch.empty([1])
+    TE       = 0
+    img_b0   = torch.empty([1])
+    img_mag  = torch.empty([1])    
+    img_mask = torch.empty([1])
 
     def __init__(self, filename=None, device='cpu'):
         super().__init__(filename, device)  
@@ -31,7 +31,7 @@ class recoB0(recotwix):
             self.img_mag = torch.abs(self.img)
         else:
             kspace = torch.from_numpy(self.twixmap['image'][:])
-            kspace = self.correct_imagescan_size(kspace, True)
+            kspace = self.correct_imagescan_size(kspace)
             self.img = self.kspace_to_image(kspace)
             self.img_mag = torch.sqrt(torch.sum(torch.abs(self.img)**2, self.dim_info['Cha']['ind'], keepdims=True)) 
 
