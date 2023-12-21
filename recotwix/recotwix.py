@@ -7,6 +7,7 @@ import nibabel as nib
 from bart import bart
 from tqdm import tqdm
 from pytools import plot
+from protocol import protocol_parse
 
 cfl_order = [
     'READ_DIM',
@@ -75,26 +76,19 @@ def fromBART(kspace:torch.Tensor):
 
 class recotwix(): 
     hdr      = {}
-    img      = None   
+    prot     = {}
+    img      = None
+    protName = None   
     twixobj  = None
     twixmap  = {}
     scans    = []
     device   = 'cpu'
-    FoV      = [0,0,0]
-    Res      = [0,0,0]
     dim_enc  = None
     dim_free = None
     dim_size = None
     dim_info = None
     transformation      = None
     nii_affine          = None
-    acceleration_factor = [1,1]
-    is3D                = False
-    isParallelImaging   = False
-    isRefScanSeparate   = False
-    isPartialFourierRO  = False
-    isPartialFourierPE1 = False
-    isPartialFourierPE2 = False
     
     def __init__(self, filename=None, device='cpu'):   
         self.device = device
@@ -110,9 +104,9 @@ class recotwix():
         for scan in self.twixmap:
             if isinstance(self.twixmap[scan], twixtools.twix_array):
                 self.scans.append(scan)
-
+        
         hdr = self.twixobj['hdr']        
-        self.hdr  = hdr
+        self.hdr = hdr
 
         self.dim_size = self.twixmap['image'].shape
         self.dim_info = {}
@@ -120,21 +114,10 @@ class recotwix():
             ind = self.twixmap['image'].dims.index(dim)
             self.dim_info[dim] = {'ind':ind, 'len':self.dim_size[ind]}
 
-        self.is3D = True if hdr['MeasYaps']['sKSpace']['ucDimension'] == 4 else False
-        self.Res  = {'x':hdr['MeasYaps']['sKSpace']['lBaseResolution'], 'y':hdr['MeasYaps']['sKSpace']['lPhaseEncodingLines'], 'z':hdr['MeasYaps']['sSliceArray']['lSize']}
-        if self.is3D:
-            self.Res['z'] = hdr['MeasYaps']['sKSpace']['lPartitions']
-
         self.dim_enc  = [self.dim_info['Col']['ind'], self.dim_info['Lin']['ind'], self.dim_info['Par']['ind']]
         self.dim_free = ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Ave')
         
-
-        self.isParallelImaging   = True if hdr['MeasYaps']['sPat']['ucPATMode'] == 2 else False
-        self.isRefScanSeparate   = True if hdr['MeasYaps']['sPat']['ucRefScanMode'] == 4 else False
-        self.acceleration_factor = [hdr['MeasYaps']['sPat']['lAccelFactPE'], hdr['MeasYaps']['sPat']['lAccelFact3D']]
-        self.isPartialFourierRO  = True if (self.Res['x'] - self.dim_info['Col']['len']) > 4 else False
-        self.isPartialFourierPE1 = True if hdr['MeasYaps']['sKSpace']['ucPhasePartialFourier'] != 16 else False
-        self.isPartialFourierPE2 = True if hdr['MeasYaps']['sKSpace']['ucSlicePartialFourier'] != 16 else False      
+        self.prot = protocol_parse(self.twixmap)
 
 
     def __str__(self):
@@ -142,28 +125,30 @@ class recotwix():
         s += f"  Scans: {self.scans}\n"
         s += f"  Dims: {list(self.dim_info.keys())}\n"
         s += f"  Size: {self.dim_size}\n"
-        s += f"  Resolution (x y z): {self.Res['x']} {self.Res['y']} {self.Res['z']}\n"
-        s += f"  PartialFourier (ro, pe, pe3d): {self.isPartialFourierRO} {self.isPartialFourierPE1} {self.isPartialFourierPE2}\n"
-        s += f"  isParallelImaging: {self.isParallelImaging}\n"
-        s += f"  Acceleration Factor: {self.acceleration_factor}\n"
+        s += f"  Resolution (x y z): {self.prot.res['x']} {self.prot.res['y']} {self.prot.res['z']}\n"
+        s += f"  PartialFourier (ro, pe, pe3d): {self.prot.isPartialFourierRO} {self.prot.isPartialFourierPE1} {self.prot.isPartialFourierPE2}\n"
+        s += f"  isParallelImaging: {self.prot.isParallelImaging}\n"
+        s += f"  Acceleration Factor: {self.prot.acceleration_factor}\n"
         return s
 
     def runReco(self, method_sensitivity='caldir'):     
         torch.cuda.empty_cache()   
 
         kspace = torch.from_numpy(self.twixmap['image'][:])
+        print(f'kspace shape: {kspace.shape}')
         kspace = self.correct_scan_size(kspace, scantype='image')
+        print(f'kspace corrected shape: {kspace.shape}')
         # Partial Fourier?
-        if self.isPartialFourierRO:
+        if self.prot.isPartialFourierRO:
             kspace = self.POCS(kspace, dim_pf=self.dim_info['Col']['ind'])
-        if self.isPartialFourierPE1:
+        if self.prot.isPartialFourierPE1:
             kspace = self.POCS(kspace, dim_pf=self.dim_info['Lin']['ind'])
-        if self.isPartialFourierPE2:
+        if self.prot.isPartialFourierPE2:
             kspace = self.POCS(kspace, dim_pf=self.dim_info['Par']['ind'])
 
         coils_sensitivity = None
         # Parallel Imaging?
-        if self.isParallelImaging:
+        if self.prot.isParallelImaging:
             self.twixmap['refscan'].flags['zf_missing_lines'] = False
             self.twixmap['refscan'].flags['skip_empty_lead']  = True
             acs = torch.from_numpy(self.twixmap['refscan'][:])
@@ -208,16 +193,19 @@ class recotwix():
     def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
         # Note: this function suppose oversampling is removed
         import torch.nn.functional as F
-        os_flag = self.twixmap[scantype].flags['remove_os']
-        self.twixmap[scantype].flags['remove_os'] = False
+        # os_flag = self.twixmap[scantype].flags['remove_os']
+        # self.twixmap[scantype].flags['remove_os'] = False
         col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap[scantype].kspace_center_col
         lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap[scantype].kspace_center_lin
         par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap[scantype].kspace_center_par
-        self.twixmap[scantype].flags['remove_os'] = os_flag # restore oversampling flag
-
+        # self.twixmap[scantype].flags['remove_os'] = os_flag # restore oversampling flag
+        # print(f'iRoFTLength: {self.hdr["Meas"]["iRoFTLength"]}, iPEFTLength: {self.hdr["Meas"]["iPEFTLength"]}, i3DFTLength: {self.hdr["Meas"]["i3DFTLength"]}')
+        # print(f'col_diff: {col_diff}, lin_diff: {lin_diff}, par_diff: {par_diff}')
+        # print(f'kspace_center_col: {self.twixmap[scantype].kspace_center_col}, kspace_center_lin: {self.twixmap[scantype].kspace_center_lin}, kspace_center_par: {self.twixmap[scantype].kspace_center_par}')
+        # print(f'res x: {self.prot.res["x"] }')
         # There might be asymmetric echo; thus, padding in the left and right differ. Note we suppose asymmetry is in the left side which should be valid in the most cases where shortening echo-time is the goal.
-        col_diff_l = col_diff // 2 # because of oversampling is removed before
-        col_diff_r = self.Res['x'] - kspace.shape[self.dim_info['Col']['ind']] - col_diff_l
+        col_diff_l = col_diff // 2 # because oversampling is removed before
+        col_diff_r = self.prot.res['x'] - kspace.shape[self.dim_info['Col']['ind']] - col_diff_l
 
         pad = [0] * kspace.ndim * 2
         pad[self.dim_info['Col']['ind']*2]   = int(col_diff_r)
@@ -239,19 +227,22 @@ class recotwix():
             print(f'Given method is not valid. Choose between {", ".join(all_methods)}')
             return
 
-        # picking the 0th element of the free dimensions
+        # picking the 0th element of the free dimensions 
         for dim_free in self.dim_free:
             acs = acs.index_select(self.dim_info[dim_free]['ind'], torch.Tensor([0]).int()) 
         acs_bart = toBART(acs).numpy() # adapting to bart CFL format
-
-        bart_slc_dim = cfl_order.index('SLICE_DIM')
+        
+        bart_slc_dim = cfl_order.index('SLICE_DIM')        
         if method.lower() == 'espirit'.lower():
-            coil_sens = bart.bart(1, f'-p {1<<bart_slc_dim} -e {acs_bart.shape[bart_slc_dim]} ecalib -m 1 -d 4', acs_bart)
+            coil_sens = bart(1, f'-p {1<<bart_slc_dim} -e {acs_bart.shape[bart_slc_dim]} ecalib -m 1 -d 4', acs_bart)
             coil_sens = fromBART(torch.from_numpy(coil_sens))
 
         elif method.lower() == 'caldir'.lower():
-            kernel_size = max([acs.shape[d] for d in self.dim_enc])//2 
-            coil_sens = bart.bart(1, '-p {} -e {} caldir {}'.format(1<<bart_slc_dim, acs_bart.shape[bart_slc_dim], kernel_size), acs_bart)
+            kernel_size = max([acs.shape[d] for d in self.dim_enc])//2
+            if kernel_size >= acs.shape[self.dim_enc[0]] :
+                kernel_size = acs.shape[self.dim_enc[0]] // 2
+            print(f'kernel_size: {kernel_size}')
+            coil_sens = bart(1, '-p {} -e {} caldir {}'.format(1<<bart_slc_dim, acs_bart.shape[bart_slc_dim], kernel_size), acs_bart)
             coil_sens = fromBART(torch.from_numpy(coil_sens))
 
         print('Done!')
@@ -276,7 +267,7 @@ class recotwix():
             kspace       = toBART(kspace)
             coil_sens    = toBART(coil_sens)
             scale_factor = torch.quantile(volume_comb, 0.99).tolist()        
-            recon        = bart.bart(1, f'-p {1<<bart_slc_dim} -e {kspace.shape[bart_slc_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
+            recon        = bart(1, f'-p {1<<bart_slc_dim} -e {kspace.shape[bart_slc_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
             volume_comb  = fromBART(torch.from_numpy(recon))
             
         print('Done!')

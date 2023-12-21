@@ -6,19 +6,17 @@ from recotwix import recotwix
 from math import pi as PI
 
 class recoB0(recotwix):
-    TE       = 0
     img_b0   = torch.empty([1])
     img_mag  = torch.empty([1])    
     img_mask = torch.empty([1])
 
     def __init__(self, filename=None, device='cpu'):
         super().__init__(filename, device)  
-        self.TE = self.hdr['MeasYaps']['alTE'][:self.dim_info['Eco']['len']] # us 
         self.runReco()
 
     def __str__(self):
         s = super().__str__()
-        s += f"  TE = {self.TE} μs\n"
+        s += f"  TE = {self.prot.TE} μs\n"
         return s
         
     def runReco(self, method_sensitivity='caldir'):
@@ -26,16 +24,16 @@ class recoB0(recotwix):
             print(f"Error!\033[93mAt least two echoes are expected!\033[0m")
             return
 
-        if self.isParallelImaging:
+        if self.prot.isParallelImaging:
             super().runReco(method_sensitivity=method_sensitivity)  
             self.img_mag = torch.abs(self.img)
         else:
             kspace = torch.from_numpy(self.twixmap['image'][:])
-            kspace = self.correct_imagescan_size(kspace)
+            kspace = self.correct_scan_size(kspace, scantype='image')
             self.img = self.kspace_to_image(kspace)
-            self.img_mag = torch.sqrt(torch.sum(torch.abs(self.img)**2, self.dim_info['Cha']['ind'], keepdims=True)) 
+            self.img_mag = torch.sum(torch.abs(self.img)**2, self.dim_info['Cha']['ind'], keepdims=True)
 
-        print(f"Calculating B0 map. \u0394TE = {(self.TE[1] - self.TE[0])} μs")
+        print(f"Calculating B0 map. \u0394TE = {(self.prot.TE[1] - self.prot.TE[0])} μs")
 
         dim_eco = self.dim_info['Eco']['ind']
         dim_rep = self.dim_info['Rep']['ind']
@@ -52,6 +50,7 @@ class recoB0(recotwix):
             self.img_b0.moveaxis(dim_rep, 0)[0,...] = torch.tensor(complex(1,0))
 
         self.img_b0 = torch.angle(self.img_b0.sum(dim=self.dim_info['Cha']['ind'], keepdims=True)) # sum over coils
+        self.img_mag = self.img_mag.index_select(self.dim_info['Eco']['ind'], idx[0])
         self.img = torch.empty((1)) # save memory
 
     ##########################################################
@@ -61,7 +60,7 @@ class recoB0(recotwix):
         if b0_uw.shape != self.img_b0.shape:
             print(f"\033[93mUnwrapped image is not yet calculated. \033[0m")
             return None
-        dTE = (self.TE[1] - self.TE[0]) * 1e-6 # s
+        dTE = (self.prot.TE[1] - self.prot.TE[0]) * 1e-6 # s
         return (b0_uw + offset) / dTE / (2*PI)
 
     ##########################################################
