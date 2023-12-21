@@ -21,7 +21,6 @@ class protocol_parse():
     shims = {'A00':0, 'X':0, 'Y':0, 'Z':0, 'A20':0, 'A21':0, 'B21':0, 'A22':0, 'B22':0, 'A30':0, 'A31':0, 'B31':0, 'A32':0}
 
 
-
     def __init__(self, twix_obj):
         hdr = twix_obj['hdr']
         img = twix_obj['image']
@@ -40,7 +39,7 @@ class protocol_parse():
         self.isPartialFourierPE2 = True if hdr['MeasYaps']['sKSpace']['ucSlicePartialFourier'] != 16 else False   
         self.protName            = hdr['Meas']['tProtocolName']
         self.TR                  = np.array(hdr['Meas']['alTR'][0]) / 1000 # in ms
-        self.TE                  = np.array(hdr['Meas']['alTE'])[0:hdr['Meas']['lContrasts']] / 1000 # in ms
+        self.TE                  = np.array(hdr['Meas']['alTE'])[0:hdr['Meas']['lContrasts']] # in us.
         self.FA                  = np.array(hdr['Meas']['adFlipAngleDegree'][0])
         # self.OS']                  = np.array(hdr['Meas']['alTI']) / 1000 # in ms
         self.coilName            = hdr['MeasYaps']['sCoilSelectMeas']['aRxCoilSelectData'][0]['asList'][0]['sCoilElementID']['tCoilID']
