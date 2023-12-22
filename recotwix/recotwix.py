@@ -87,8 +87,8 @@ class recotwix():
     dim_free = None
     dim_size = None
     dim_info = None
-    transformation      = None
-    nii_affine          = None
+    transformation = dict()
+    nii_affine     = None
     
     def __init__(self, filename=None, device='cpu'):   
         self.device = device
@@ -118,6 +118,7 @@ class recotwix():
         self.dim_free = ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Ave')
         
         self.prot = protocol_parse(self.twixmap)
+        self._extract_transformation()
 
 
     def __str__(self):
@@ -134,7 +135,7 @@ class recotwix():
     def runReco(self, method_sensitivity='caldir'):     
         torch.cuda.empty_cache()   
 
-        kspace = torch.from_numpy(self.twixmap['image'][:])
+        kspace = self._getkspace()
         print(f'kspace shape: {kspace.shape}')
         kspace = self.correct_scan_size(kspace, scantype='image')
         print(f'kspace corrected shape: {kspace.shape}')
@@ -359,6 +360,43 @@ class recotwix():
     ##########################################################
     def get_gfactor(self, kspace:torch.Tensor, coil_sens:torch.Tensor):
         pass
+    
+    ##########################################################
+
+    def _getkspace(self, reorder_slice=True):
+        kspace = torch.from_numpy(self.twixmap['image'][:])
+        if reorder_slice:
+            kspace = self._reorder_slices(kspace)
+        return kspace
+
+    def _reorder_slices(self, data:torch.Tensor):
+        unsorted_order = np.zeros((self.dim_info['Sli']['len']))
+        transform_inv = np.linalg.inv(self.transformation['mat44'])
+        for cSlc in range(self.dim_info['Sli']['len']):
+            p = transform_inv @ self.transformation['soda'][cSlc,:,3]
+            unsorted_order[cSlc] = p[2]  # z position before transformation
+
+        ind_sorted = np.argsort(unsorted_order)
+        self.transformation['soda'] = self.transformation['soda'][ind_sorted,...]
+        return data.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(ind_sorted))
+
+
+    def _extract_transformation(self):
+        from scipy.spatial.transform import Rotation as R
+
+        self.transformation['soda'] = np.zeros((self.dim_info['Sli']['len'], 4, 4))
+        flag_imagescan = np.array([mdb.is_image_scan() for mdb in self.twixobj['mdb']])
+        slice_no = np.array([mdb.cSlc for mdb in self.twixobj['mdb']])
+        for cSlc in range(self.dim_info['Sli']['len']):
+            ind = np.where((slice_no == cSlc) & flag_imagescan)[0].tolist()[0]
+            SliceData = self.twixobj['mdb'][ind].mdh.SliceData    
+            position = [SliceData.SlicePos.Sag, SliceData.SlicePos.Cor, SliceData.SlicePos.Tra]
+            dcm = R.from_quat(np.roll(SliceData.Quaternion, -1)).as_matrix()  #   {SliceData.SlicePos}')
+            self.transformation['soda'][cSlc,:,:] =  np.row_stack((np.column_stack((dcm, position)), [0,0,0,1]))
+            
+        # rotation matrix should be identical for all slices, so mean does not matter here, but offcenter will be averaged
+        self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
+
 
     ##########################################################
     # Save a custom volume as nifti
