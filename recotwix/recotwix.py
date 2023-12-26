@@ -246,7 +246,6 @@ class recotwix():
             coil_sens = bart(1, '-p {} -e {} caldir {}'.format(1<<bart_slc_dim, acs_bart.shape[bart_slc_dim], kernel_size), acs_bart)
             coil_sens = fromBART(torch.from_numpy(coil_sens))
 
-        print('Done!')
         return coil_sens
     
     ##########################################################
@@ -271,7 +270,6 @@ class recotwix():
             recon        = bart(1, f'-p {1<<bart_slc_dim} -e {kspace.shape[bart_slc_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
             volume_comb  = fromBART(torch.from_numpy(recon))
             
-        print('Done!')
         return volume_comb
 
 
@@ -349,7 +347,6 @@ class recotwix():
         mask = mask_clone
         mask[ind_one[0]%acc_pf::acc_pf] = True
         torch.moveaxis(kspace_full, dim_pf, 0)[~mask] = 0       
-        print('Done!')
 
         return kspace_full.to('cpu') 
 
@@ -396,7 +393,38 @@ class recotwix():
             
         # rotation matrix should be identical for all slices, so mean does not matter here, but offcenter will be averaged
         self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
+        #
+        # build affine matrix, according to SPM notation (see spm_dicom_convert.m)
+        # 
+        T = self.transformation['mat44'].copy()
+        T[:,1:3] = -T[:,1:3] # experimentally discovered
 
+        PixelSpacing = [self.prot.fov['x'] / self.prot.res['x'], 
+                        self.prot.fov['y'] / self.prot.res['y']]
+        
+        n_slice = self.prot.res['z']
+
+        R = T[:,0:2] @ np.diag(PixelSpacing)
+        x1 = [1,1,1,1]
+        x2 = [1,1,n_slice,1]
+        
+        zmax = (self.prot.fov['z'] - self.prot.slice_thickness) / 2
+        y1_c = T @ [0, 0, -zmax, 1]
+        y2_c = T @ [0, 0, +zmax, 1]
+        
+        # SBCS Position Vector points to slice center this must be recalculated for DICOM to point to the upper left corner.
+        y1 = y1_c - T[:,0] * self.prot.fov['x']/2 - T[:,1] * self.prot.fov['y']/2
+        y2 = y2_c - T[:,0] * self.prot.fov['x']/2 - T[:,1] * self.prot.fov['y']/2
+
+        DicomToPatient  = np.column_stack((y1, y2, R)) @ np.linalg.inv(np.column_stack((x1, x2, np.eye(4,2))))
+        # Flip voxels in y
+        
+        AnalyzeToDicom  = np.column_stack((np.diag([1,-1,1]), [0, (self.prot.res['y']+1), 0]))
+        AnalyzeToDicom  = np.row_stack((AnalyzeToDicom, [0,0,0,1]))
+        # Flip mm coords in x and y directions
+        PatientToTal    = np.diag([-1, -1, 1, 1]) 
+        affine          = PatientToTal @ DicomToPatient @ AnalyzeToDicom
+        self.transformation['nii_affine'] = affine @ np.column_stack((np.eye(4,3), [1,1,1,1])) # this part is implemented in SPM nifti.m
 
     ##########################################################
     # Save a custom volume as nifti
