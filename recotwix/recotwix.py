@@ -89,6 +89,7 @@ class recotwix():
     dim_info = None
     transformation = dict()
     nii_affine     = None
+    slice_reorder_ind = None
     
     def __init__(self, filename=None, device='cpu'):   
         self.device = device
@@ -119,6 +120,7 @@ class recotwix():
         
         self.prot = protocol_parse(self.twixmap)
         self._extract_transformation()
+        self._slice_reorder()
 
 
     def __str__(self):
@@ -360,22 +362,19 @@ class recotwix():
     
     ##########################################################
 
-    def _getkspace(self, reorder_slice=True):
+    def _getkspace(self):
         kspace = torch.from_numpy(self.twixmap['image'][:])
-        if reorder_slice:
-            kspace = self._reorder_slices(kspace)
-        return kspace
+        return kspace.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(self.slice_reorder_ind))
 
-    def _reorder_slices(self, data:torch.Tensor):
+    def _slice_reorder(self):
         unsorted_order = np.zeros((self.dim_info['Sli']['len']))
         transform_inv = np.linalg.inv(self.transformation['mat44'])
         for cSlc in range(self.dim_info['Sli']['len']):
             p = transform_inv @ self.transformation['soda'][cSlc,:,3]
             unsorted_order[cSlc] = p[2]  # z position before transformation
 
-        ind_sorted = np.argsort(unsorted_order)
-        self.transformation['soda'] = self.transformation['soda'][ind_sorted,...]
-        return data.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(ind_sorted))
+        self.slice_reorder_ind = np.argsort(unsorted_order)
+        self.transformation['soda'] = self.transformation['soda'][self.slice_reorder_ind,...]
 
 
     def _extract_transformation(self):
@@ -393,9 +392,8 @@ class recotwix():
             
         # rotation matrix should be identical for all slices, so mean does not matter here, but offcenter will be averaged
         self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
-        #
+
         # build affine matrix, according to SPM notation (see spm_dicom_convert.m)
-        # 
         T = self.transformation['mat44'].copy()
         T[:,1:3] = -T[:,1:3] # experimentally discovered
 
