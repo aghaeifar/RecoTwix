@@ -132,6 +132,7 @@ class recotwix():
         return kspace.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(self.slice_reorder_ind))
 
     def _slice_reorder(self):
+        # sort slices based on position (e.g., when acqusition is interleaved).
         unsorted_order = np.zeros((self.dim_info['Sli']['len']))
         transform_inv = np.linalg.inv(self.transformation['mat44'])
         for cSlc in range(self.dim_info['Sli']['len']):
@@ -159,20 +160,10 @@ class recotwix():
         # rotation matrix should be identical for all slices, so mean does not matter here, but offcenter will be averaged
         self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
         self._slice_reorder()
-
-        # build affine matrix, according to SPM notation (see spm_dicom_convert.m)
         
-        # following the instructions in https://nipy.org/nibabel/coordinate_systems.html
-        # and https://nipy.org/nibabel/dicom/dicom_orientation.html
-        # and https://nipy.org/nibabel/dicom/spm_dicom.html
+        # following the instructions provided in https://nipy.org/nibabel/coordinate_systems.html and https://nipy.org/nibabel/dicom/dicom_orientation.html
         # other useful links: https://www.slicer.org/wiki/Coordinate_systems, 
-
-        fov, res, thickness = self.prot.fov, self.prot.res, self.prot.slice_thickness
-        # xyz is equal to RAS when patient position is HFS (head first supine)
-        # pcs = patient coordinate system is LPS = [Sag, Cor, Tra]
-        pcs_to_xyz = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-        offset_correction = np.column_stack((np.eye(4,3), [1,1,1,1]))
-        PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
+        fov, res, thickness = self.prot.fov, self.prot.res, self.prot.slice_thickness        
         # scaling
         if res['z'] == 1:
             PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
@@ -188,10 +179,10 @@ class recotwix():
         offset = self.transformation['mat44'] @ corner_mm
         translation_affine = np.eye(4)
         translation_affine[:,-1] = offset
+        # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here 
+        PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
 
-        affine = translation_affine @ rotation_affine @ scaling_affine
-        affine =  PatientToTal @ affine
-
+        affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine
         self.transformation['nii_affine'] = affine
 
 
