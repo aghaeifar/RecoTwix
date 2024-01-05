@@ -161,6 +161,16 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
 
 
 
+    ##########################################################
+    def noise_whitening(self, kspace:torch.Tensor, noise:torch.Tensor):
+        pass
+
+    ##########################################################
+    def get_gfactor(self, kspace:torch.Tensor, coil_sens:torch.Tensor):
+        pass
+    
+    ##########################################################
+
 # Partial Fourier using Projection onto Convex Sets
 def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device='cuda'):
     print(f'POCS reconstruction along dim = {dim_pf} started...')
