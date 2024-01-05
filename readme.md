@@ -7,6 +7,7 @@ recotwix uses [twixtools](https://github.com/pehses/twixtools) for raw data read
 Other packages needed:
  - numpy 
  - torch 
+ - scipy
  - nibabel 
  - tqdm
  

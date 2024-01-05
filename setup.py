@@ -17,5 +17,5 @@ setup(name='recotwix', # this will be name of package in packages list : pip lis
       author_email='ali.aghaeifar [at] tuebingen.mpg [dot] de',
       license='MIT License',
       packages=['recotwix'],
-      install_requires = ['tqdm','numpy','nibabel','torch','twixtools']
+      install_requires = ['tqdm','numpy','nibabel','torch','twixtools', 'scipy']
      )
