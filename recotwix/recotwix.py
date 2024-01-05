@@ -174,7 +174,10 @@ class recotwix():
         offset_correction = np.column_stack((np.eye(4,3), [1,1,1,1]))
         PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
         # scaling
-        PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1]
+        if res['z'] == 1:
+            PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
+        else:
+            PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1]
         scaling_affine = np.zeros([4,4])
         np.fill_diagonal(scaling_affine, PixelSpacing)
         #rotation
