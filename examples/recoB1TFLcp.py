@@ -2,10 +2,6 @@
 import torch
 from recotwix import recotwix
 
-#
-# This class implementes reconstruction of the B1 mapping technique as described in https://onlinelibrary.wiley.com/doi/10.1002/mrm.29459
-#
-
 GAMMA_RAD       = 267.52218744e6  # rad/(sT)
 GAMMA_HZ        = 42.577478518e6  # Hz/T
 
