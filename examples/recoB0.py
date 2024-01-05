@@ -2,7 +2,7 @@ import os
 import ctypes
 import torch
 import numpy as np
-from recotwix import recotwix
+from recotwix import recotwix, kspace_to_image
 from math import pi as PI
 
 class recoB0(recotwix):
@@ -30,7 +30,7 @@ class recoB0(recotwix):
         else:
             kspace = torch.from_numpy(self.twixmap['image'][:])
             kspace = self.correct_scan_size(kspace, scantype='image')
-            self.img = self.kspace_to_image(kspace)
+            self.img = kspace_to_image(kspace, dim_enc=self.dim_enc, dim_loop=self.dim_info['Cha']['ind'])
             self.img_mag = torch.sum(torch.abs(self.img)**2, self.dim_info['Cha']['ind'], keepdims=True)
 
         print(f"Calculating B0 map. \u0394TE = {(self.prot.TE[1] - self.prot.TE[0])} μs")
