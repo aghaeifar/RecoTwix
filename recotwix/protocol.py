@@ -1,5 +1,5 @@
 '''
-extract important protocol information from twix header
+extract the necessary protocol information from twix header
 '''
 import numpy as np
 import math 
@@ -41,13 +41,17 @@ class protocol_parse():
 
         if not self.is3D:
             self.slice_thickness = hdr['MeasYaps']['sSliceArray']['asSlice'][0]['dThickness']
-            d = math.dist(list(hdr["MeasYaps"]["sSliceArray"]["asSlice"][0]["sPosition"].values()), list(hdr["MeasYaps"]["sSliceArray"]["asSlice"][-1]["sPosition"].values())) # includes slice-gap
+            slc = hdr["MeasYaps"]['sSliceArray']['asSlice']
+            d = math.dist([slc[0].get('sPosition', {}).get('dSag',0) , slc[0].get('sPosition', {}).get('dCor',0) , slc[0].get('sPosition', {}).get('dTra',0)], 
+                          [slc[-1].get('sPosition', {}).get('dSag',0), slc[-1].get('sPosition', {}).get('dCor',0), slc[-1].get('sPosition', {}).get('dTra',0)]) # includes slice-gap
             self.fov['z'] = d + self.slice_thickness # d is distance from center of the first slice to center of the last slice, thus we need to add the thickness of the one slice to get the total fov in z-direction
     
         self.isParallelImaging   = True if hdr['MeasYaps']['sPat']['ucPATMode'] == 2 else False
         self.isRefScanSeparate   = True if hdr['MeasYaps']['sPat']['ucRefScanMode'] == 4 else False
         self.acceleration_factor = [hdr['MeasYaps']['sPat']['lAccelFactPE'], hdr['MeasYaps']['sPat']['lAccelFact3D']]
-        self.isPartialFourierRO  = True if abs(self.res['x'] - img.shape[img.dims.index('Col')//2]) > 4 else False
+        
+        img_col = img.shape[img.dims.index('Col')] if img.flags['remove_os'] else img.shape[img.dims.index('Col')]//2
+        self.isPartialFourierRO  = True if abs(self.res['x'] - img_col) > 4 else False
         self.isPartialFourierPE1 = True if hdr['MeasYaps']['sKSpace']['ucPhasePartialFourier'] != 16 else False
         self.isPartialFourierPE2 = True if hdr['MeasYaps']['sKSpace']['ucSlicePartialFourier'] != 16 else False   
         self.protName            = hdr['Meas']['tProtocolName']
