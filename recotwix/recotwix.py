@@ -162,8 +162,12 @@ class recotwix():
         self._slice_reorder()
         
         # following the instructions provided in https://nipy.org/nibabel/coordinate_systems.html and https://nipy.org/nibabel/dicom/dicom_orientation.html
-        # other useful links: https://www.slicer.org/wiki/Coordinate_systems, 
-        fov, res, thickness = self.prot.fov, self.prot.res, self.prot.slice_thickness        
+        # other useful links: https://www.slicer.org/wiki/Coordinate_systems
+        fov, res, thickness = self.prot.fov, self.prot.res, self.prot.slice_thickness
+        # Here we swap order of x and y because we would like to have PE and RO as the first and the second dimensions, respectively, in nifti file.
+        # flipping volume along its center 
+        flip_affine = np.diag([-1, -1, -1 if self.prot.is3D else 1, 1]) 
+        flip_affine[:,-1] = [res['y'], res['x'], res['z'] if self.prot.is3D else 0, 1]
         # scaling
         if res['z'] == 1:
             PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
@@ -182,7 +186,7 @@ class recotwix():
         # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here 
         PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
 
-        affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine
+        affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine @ flip_affine
         self.transformation['nii_affine'] = affine
 
 
@@ -196,18 +200,13 @@ class recotwix():
             return
         
         dim = self.dim_info
+        # permute to match [PE, RO, SLC/PAR, REP]
         perm_ind = [dim['Lin']['ind'], dim['Col']['ind'], dim['Par']['ind'], dim['Sli']['ind'], dim['Rep']['ind'], dim['Cha']['ind']]
         perm_ind = perm_ind + [d['ind'] for d in dim.values() if d['ind'] not in perm_ind]
         volume = volume.permute(perm_ind) 
         volume = volume.squeeze()
         if self.dim_info['Par']['len'] == 1 and self.dim_info['Sli']['len'] == 1:
             volume = volume.unsqueeze(dim=2)
-
-        if self.prot.is3D:
-            flip_dims = [0, 1, 2]
-        else:
-            flip_dims = [0, 1]
-        volume = torch.flip(volume, dims=flip_dims) 
 
         img = nib.Nifti1Image(volume.numpy(), self.transformation['nii_affine'])
         nib.save(img, filename)
