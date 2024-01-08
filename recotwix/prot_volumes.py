@@ -13,23 +13,25 @@ class volume:
     _res = None # resolution (voxels)
     _thickness = None # slice thickness (mm)
     _affine = None
-    _transformation = None
-    
+    _transformation = None    
 
     def __init__(self, volume_structure=None, res=None, thickness=None) -> None:
         if volume_structure is None:
             return
+
         v = volume_structure
         self._norm = [v['sNormal'].get('dSag',0), v['sNormal'].get('dCor',0), v['sNormal'].get('dTra',0)]
         self._rot = v.get('dInPlaneRot', 0)
         self._pos = [v.get('sPosition', {}).get('dSag',0), v.get('sPosition', {}).get('dCor',0), v.get('sPosition', {}).get('dTra',0)]
-        self._fov = [v['dReadoutFOV'], v['dPhaseFOV'], v['dThickness']]
+        self._fov = {'x':v['dReadoutFOV'], 'y':v['dPhaseFOV'], 'z':v['dThickness']}
+        if res is None:
+            res = self._fov
         self._res = res      
         self._thickness = thickness  
 
         dcm = T.calc_dcm(self._norm[0], self._norm[1], self._norm[2], self._rot)
         self._transformation = T.calc_tranformation_matrix(dcm, self._pos)
-        self._affine = T.calc_nifti_affine(self._transformation, self._fov, self._res, thickness)
+        self._affine = T.calc_nifti_affine(self._transformation, self._fov, self._res, self._thickness)
     
     @property
     def affine(self):
@@ -46,6 +48,8 @@ class adjustment_volume(volume):
 
 
 class slice_volume(volume):
+    _slice_volume = None
+
     def __init__(self, xprot) -> None:
         if xprot.get('sSliceArray', None) is None:
             return
@@ -54,15 +58,15 @@ class slice_volume(volume):
 
         # transformation per slice
         self._slice_volume = list()
-        res  = [xprot['sKSpace']['lBaseResolution'], xprot['sKSpace']['lPhaseEncodingLines'], xprot['sKSpace']['lPartitions']]
-        res[2] = res[2] if xprot['sKSpace']['ucDimension'] == 4 else 1 # in case of 2D scans, lPartitions is not valid
+        res  = {'x':xprot['sKSpace']['lBaseResolution'], 'y':xprot['sKSpace']['lPhaseEncodingLines'], 'z':xprot['sKSpace']['lPartitions']}
+        res['z'] = res['z'] if xprot['sKSpace']['ucDimension'] == 4 else 1 # in case of 2D scans, lPartitions is not valid
         positions = list()
         for SlcVol in xprot['sSliceArray']['asSlice']:                        
             self._slice_volume.append(volume(SlcVol, res)) 
             positions.append([SlcVol.get('sPosition', {}).get('dSag',0) , SlcVol.get('sPosition', {}).get('dCor',0) , SlcVol.get('sPosition', {}).get('dTra',0)])
         
         # transformation for the whole volume
-        res[2] = res[2] if xprot['sKSpace']['ucDimension'] == 4 else xprot['sSliceArray']['lSize'] # in case of 2D scans
+        res['z'] = res['z'] if xprot['sKSpace']['ucDimension'] == 4 else xprot['sSliceArray']['lSize'] # in case of 2D scans
         SlcVol = xprot['sSliceArray']['asSlice'][0]
         slice_thickness = SlcVol['dThickness']
         pos_mean = np.mean(positions, axis=0).tolist()
@@ -83,7 +87,8 @@ class slice_volume(volume):
 
 
 class ptx_volume():
-    
+    _ptx_volume = None
+
     def __init__(self, xprot) -> None:
         if xprot.get('sPTXData', None) is None:
             return
