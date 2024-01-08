@@ -14,25 +14,32 @@ class volume:
     _thickness = None # slice thickness (mm)
     _affine = None
     _transformation = None    
+    _name = None
 
-    def __init__(self, volume_structure=None, res=None, thickness=None) -> None:
-        if volume_structure is None:
-            return
-
+    def __init__(self, volume_structure=None, res=None, thickness=None, name=None, res2fov_ratio=1) -> None:
+        
         v = volume_structure
         self._norm = [v['sNormal'].get('dSag',0), v['sNormal'].get('dCor',0), v['sNormal'].get('dTra',0)]
         self._rot = v.get('dInPlaneRot', 0)
         self._pos = [v.get('sPosition', {}).get('dSag',0), v.get('sPosition', {}).get('dCor',0), v.get('sPosition', {}).get('dTra',0)]
         self._fov = {'x':v['dReadoutFOV'], 'y':v['dPhaseFOV'], 'z':v['dThickness']}
         if res is None:
-            res = self._fov
-        self._res = res      
-        self._thickness = thickness  
+            res = {key: int(value*res2fov_ratio) for key, value in self._fov.items()}
+
+        self._res = res  
+        self._thickness = thickness if thickness is not None else (self._fov['z'] / self._res['z'])
 
         dcm = T.calc_dcm(self._norm[0], self._norm[1], self._norm[2], self._rot)
         self._transformation = T.calc_tranformation_matrix(dcm, self._pos)
         self._affine = T.calc_nifti_affine(self._transformation, self._fov, self._res, self._thickness)
-    
+        self._name = name
+
+    def write_nifti(self, filename):
+        import nibabel as nib 
+        vol = np.ones((self._res['y'], self._res['x'], self._res['z']))
+        img = nib.Nifti1Image(vol, self._affine)
+        nib.save(img, filename)
+            
     @property
     def affine(self):
         return self._affine
@@ -44,10 +51,10 @@ class volume:
 
 class adjustment_volume(volume):
     def __init__(self, xprot) -> None:
-        super().__init__(xprot['sAdjData']['sAdjVolume'])  
+        super().__init__(xprot['sAdjData']['sAdjVolume'], res2fov_ratio=0.5)  
 
 
-class slice_volume(volume):
+class slice_volume():
     _slice_volume = None
 
     def __init__(self, xprot) -> None:
@@ -61,22 +68,10 @@ class slice_volume(volume):
         res  = {'x':xprot['sKSpace']['lBaseResolution'], 'y':xprot['sKSpace']['lPhaseEncodingLines'], 'z':xprot['sKSpace']['lPartitions']}
         res['z'] = res['z'] if xprot['sKSpace']['ucDimension'] == 4 else 1 # in case of 2D scans, lPartitions is not valid
         positions = list()
-        for SlcVol in xprot['sSliceArray']['asSlice']:                        
-            self._slice_volume.append(volume(SlcVol, res)) 
+        for SlcVol in xprot['sSliceArray']['asSlice']:                      
+            self._slice_volume.append(volume(SlcVol, res=res)) 
             positions.append([SlcVol.get('sPosition', {}).get('dSag',0) , SlcVol.get('sPosition', {}).get('dCor',0) , SlcVol.get('sPosition', {}).get('dTra',0)])
         
-        # transformation for the whole volume
-        res['z'] = res['z'] if xprot['sKSpace']['ucDimension'] == 4 else xprot['sSliceArray']['lSize'] # in case of 2D scans
-        SlcVol = xprot['sSliceArray']['asSlice'][0]
-        slice_thickness = SlcVol['dThickness']
-        pos_mean = np.mean(positions, axis=0).tolist()
-        SlcVol['sPosition'] = {'dSag': pos_mean[0], 'dCor': pos_mean[1], 'dTra': pos_mean[2]}
-        SlcVol['dThickness'] = math.dist(positions[0], positions[-1]) + slice_thickness
-        super().__init__(SlcVol, res, slice_thickness)
-        # print([SlcVol['sNormal'].get('dSag',0), SlcVol['sNormal'].get('dCor',0), SlcVol['sNormal'].get('dTra',0)], SlcVol.get('dInPlaneRot', 0))
-        # print([SlcVol['sPosition'].get('dSag',0), SlcVol['sPosition'].get('dCor',0), SlcVol['sPosition'].get('dTra',0)])
-
-
     def __getitem__(self, index):
         if index >= len(self._slice_volume):
             raise IndexError(f'Item out of range. Slice volume has only {len(self._slice_volume)} items but {index} is asked.')

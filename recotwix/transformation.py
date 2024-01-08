@@ -3,21 +3,18 @@
 import numpy as np
 
 
-def calc_nifti_affine(transformation, fov, res, thickness=None):
+def calc_nifti_affine(transformation, fov, res, thickness):
     """
     transformation: transformation matrix, 4x4
     fov (dict): field of view in mm, 3x1 [x, y, z]
     res: resolution, 3x1 [x, y, z]
-    thickness: slice thickness in mm; important for 2D scans with slice gap
+    thickness: slice thickness in mm; slice thickness is not necessary fov['z']/res['z], e.g., 2D scans with slice gap
 
     following the instructions provided in https://nipy.org/nibabel/coordinate_systems.html and https://nipy.org/nibabel/dicom/dicom_orientation.html
     other useful links: https://www.slicer.org/wiki/Coordinate_systems
     """
     if isinstance(transformation, list):
         transformation = np.array(transformation)
-    
-    if thickness is None:
-        thickness = fov['z'] / res['z']
 
     T = transformation
     if T.shape != (4,4):
@@ -28,10 +25,11 @@ def calc_nifti_affine(transformation, fov, res, thickness=None):
     if res['z'] == 1:
         PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
     else:
-        PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1]
+        PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1] # to include slice-gap
     scaling_affine = np.zeros([4,4])
     np.fill_diagonal(scaling_affine, PixelSpacing)
 
+    # print(transformation, 'fov=', fov, 'res=', res, 'thickness=', thickness, 'PixelSpacing=', PixelSpacing)
     #rotation
     rotation_affine = T.copy()
     rotation_affine[0:3,-1] = 0
