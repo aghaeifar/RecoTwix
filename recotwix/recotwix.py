@@ -3,6 +3,7 @@ import twixtools
 import numpy as np
 from .protocol import protocol_parse
 from .reco_tools import POCS, coil_combination, calc_coil_sensitivity
+from .transformation import calc_nifti_affine
 
 
 class recotwix(): 
@@ -156,38 +157,18 @@ class recotwix():
             dcm = Rotation.from_quat(np.roll(SliceData.Quaternion, -1)).as_matrix()  #   {SliceData.SlicePos}')
             self.transformation['soda'][cSlc,:,:] =  np.row_stack((np.column_stack((dcm, position)), [0,0,0,1]))
         
-        
         # rotation matrix should be identical for all slices, so mean does not matter here, but offcenter will be averaged
         self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
         self._slice_reorder()
         
-        # following the instructions provided in https://nipy.org/nibabel/coordinate_systems.html and https://nipy.org/nibabel/dicom/dicom_orientation.html
-        # other useful links: https://www.slicer.org/wiki/Coordinate_systems
-        fov, res, thickness = self.prot.fov, self.prot.res, self.prot.slice_thickness
         # Here we swap order of x and y because we would like to have PE and RO as the first and the second dimensions, respectively, in nifti file.
         # flipping volume along its center 
+        res =self.prot.res
         flip_affine = np.diag([-1, -1, -1 if self.prot.is3D else 1, 1]) 
         flip_affine[:,-1] = [res['y'], res['x'], res['z'] if self.prot.is3D else 0, 1]
-        # scaling
-        if res['z'] == 1:
-            PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
-        else:
-            PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1]
-        scaling_affine = np.zeros([4,4])
-        np.fill_diagonal(scaling_affine, PixelSpacing)
-        #rotation
-        rotation_affine = self.transformation['mat44'].copy()
-        rotation_affine[0:3,-1] = 0
-        # translation
-        corner_mm = np.array([-fov['y']/2, -fov['x']/2, -(fov['z']-thickness)/2, 1])
-        offset = self.transformation['mat44'] @ corner_mm
-        translation_affine = np.eye(4)
-        translation_affine[:,-1] = offset
-        # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here 
-        PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
 
-        affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine @ flip_affine
-        self.transformation['nii_affine'] = affine
+        affine = calc_nifti_affine(self.transformation['mat44'], self.prot.fov, self.prot.res, self.prot.slice_thickness)
+        self.transformation['nii_affine'] = affine @ flip_affine
 
 
     ##########################################################
@@ -210,3 +191,5 @@ class recotwix():
 
         img = nib.Nifti1Image(volume.numpy(), self.transformation['nii_affine'])
         nib.save(img, filename)
+
+        

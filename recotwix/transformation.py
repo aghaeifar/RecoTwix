@@ -3,66 +3,50 @@
 import numpy as np
 
 
-def calc_nifti_affine(transformation, fov, res=None, thickness=None):
+def calc_nifti_affine(transformation, fov, res, thickness=None):
     """
     transformation: transformation matrix, 4x4
-    fov: field of view in mm, 3x1 [x, y, z]
+    fov (dict): field of view in mm, 3x1 [x, y, z]
     res: resolution, 3x1 [x, y, z]
     thickness: slice thickness in mm; important for 2D scans with slice gap
 
-    % Orientation information
-    %--------------------------------------------------------------------------
-    % Axial Analyze voxel co-ordinate system:
-    % x increases     right to left
-    % y increases posterior to anterior
-    % z increases  inferior to superior
-
-    % DICOM patient co-ordinate system (LPS):
-    % x increases     right to left
-    % y increases  anterior to posterior
-    % z increases  inferior to superior
-
-    % Talairach coordinates system (RAS):
-    % x increases      left to right
-    % y increases posterior to anterior
-    % z increases  inferior to superior
-
-    https://github.com/rordenlab/NIfTIspace
+    following the instructions provided in https://nipy.org/nibabel/coordinate_systems.html and https://nipy.org/nibabel/dicom/dicom_orientation.html
+    other useful links: https://www.slicer.org/wiki/Coordinate_systems
     """
-    if isinstance(fov, list):
-        fov = np.array(fov)
-
-    if res is None:
-        res = np.round(fov) # 1mm isotropic        
+    if isinstance(transformation, list):
+        transformation = np.array(transformation)
+    
     if thickness is None:
-        thickness = fov[2] / res[2]
+        thickness = fov['z'] / res['z']
 
-    # build affine matrix, according to SPM notation (see spm_dicom_convert.m)
     T = transformation
-    T[:,1:3] = -T[:,1:3] # experimentally found that y and z need to be flipped
-    PixelSpacing = [fov[0] / res[0], fov[1] / res[1]]
-    n_slice = res[2]
-
-    R = T[:,0:2] @ np.diag(PixelSpacing)
-    x1 = [1,1,1,1]
-    x2 = [1,1,n_slice,1] if n_slice > 1 else [0,0,1,0]
+    if T.shape != (4,4):
+        raise ValueError('transformation matrix should be 4x4')
     
-    zmax = (fov[2] - thickness) / 2
-    if zmax < 0.0001:
-        zmax = thickness/2
+    # Here we swap order of x and y because we would like to have PE and RO as the first and the second dimensions, respectively, in nifti file.
+    # scaling
+    if res['z'] == 1:
+        PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], thickness, 1]
+    else:
+        PixelSpacing = [fov['y']/res['y'], fov['x']/res['x'], (fov['z']-thickness)/(res['z'] - 1), 1]
+    scaling_affine = np.zeros([4,4])
+    np.fill_diagonal(scaling_affine, PixelSpacing)
 
-    y1_c = T @ [0, 0, -zmax, 1]
-    y2_c = T @ [0, 0, +zmax, 1]
-    
-    # SBCS Position Vector points to slice center this must be recalculated for DICOM to point to the upper left corner.
-    y1 = y1_c - T[:,0] * fov[0]/2 - T[:,1] * fov[1]/2
-    y2 = y2_c - T[:,0] * fov[0]/2 - T[:,1] * fov[1]/2
+    #rotation
+    rotation_affine = T.copy()
+    rotation_affine[0:3,-1] = 0
 
-    DicomToPatient  = np.column_stack((y1, y2, R)) @ np.linalg.inv(np.column_stack((x1, x2, np.eye(4,2))))
-    AnalyzeToDicom  = np.row_stack( (np.column_stack( (np.diag([1,-1,1]), [0, (res[1]+1), 0]) ), [0,0,0,1]) ) # Flip voxels in y
-    PatientToTal    = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
-    affine          = PatientToTal @ DicomToPatient @ AnalyzeToDicom
-    return affine @ np.column_stack((np.eye(4,3), [1,1,1,1])) # this part is implemented in SPM nifti.m
+    # translation
+    corner_mm = np.array([-fov['y']/2, -fov['x']/2, -(fov['z']-thickness)/2, 1])
+    offset = T @ corner_mm
+    translation_affine = np.eye(4)
+    translation_affine[:,-1] = offset
+
+    # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here 
+    PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
+
+    affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine
+    return affine
 
 
 
@@ -92,13 +76,6 @@ def calc_plane_rotation(norm_sag, norm_cor, norm_tra):
         R1 = [[1, 0, 0], [0, 0, 1], [0,-1, 0]]
     else: # transversal
         R1 = [[0,-1, 0], [1, 0, 0], [0, 0, 1]]
-
-    # if main_orientation == 0:
-    #     R1 = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]  # @ mat // inplane mat
-    # elif main_orientation == 1:
-    #     R1 = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]
-    # else:
-    #     R1 = np.eye(3)
     
     init_normal = np.zeros(3)
     init_normal[main_orientation] = 1
