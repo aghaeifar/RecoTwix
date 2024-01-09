@@ -29,7 +29,7 @@ class volume:
         self._res = res  
         self._thickness = thickness if thickness is not None else (self._fov['z'] / self._res['z'])
 
-        dcm = T.calc_dcm(self._norm[0], self._norm[1], self._norm[2], self._rot)
+        dcm = T.calc_norm2dcm(self._norm[0], self._norm[1], self._norm[2], self._rot)
         self._transformation = T.calc_tranformation_matrix(dcm, self._pos)
         self._affine = T.calc_nifti_affine(self._transformation, self._fov, self._res, self._thickness)
         self._name = name

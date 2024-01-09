@@ -54,7 +54,7 @@ def calc_tranformation_matrix(dcm, position):
     return T
 
 
-def calc_dcm(norm_sag, norm_cor, norm_tra, inplane_rot_rad):
+def calc_norm2dcm(norm_sag, norm_cor, norm_tra, inplane_rot_rad):
     # Creating direct cosine matrix (DCM) from plane normal vector and inplane rotation.
     R1 = calc_plane_rotation(norm_sag, norm_cor, norm_tra)
     R2 = calc_inplane_rotation(inplane_rot_rad)
