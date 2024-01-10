@@ -1,7 +1,7 @@
 
 
 import numpy as np
-
+import scipy as sp
 
 def calc_nifti_affine(transformation, fov, res, thickness):
     """
@@ -97,3 +97,12 @@ def calc_inplane_rotation(inplane_rot_rad):
                     [np.sin(-r), np.cos(-r), 0],
                     [0         , 0         , 1]]
     return rot_inplane
+
+
+def reslice_vol(ref_vol, ref_affine, target_affine, target_size, interp_oder=3, fill_value=0):
+    grid = np.mgrid[[slice(0, i) for i in target_size]].reshape((3, -1))
+    grid = np.vstack((grid, np.ones(grid.shape[1])))
+    T = sp.linalg.lstsq(ref_affine, target_affine)[0] # calculate -> inv(ref_affine) @ target_affine
+    grid = T @ grid
+    resampled_vol = sp.ndimage.map_coordinates(ref_vol, grid[0:3,:], order=interp_oder, cval=fill_value).reshape(target_size)
+    return resampled_vol
