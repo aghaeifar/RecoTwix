@@ -99,10 +99,42 @@ def calc_inplane_rotation(inplane_rot_rad):
     return rot_inplane
 
 
-def reslice_vol(ref_vol, ref_affine, target_affine, target_size, interp_oder=3, fill_value=0):
-    grid = np.mgrid[[slice(0, i) for i in target_size]].reshape((3, -1))
+def reslice(volume_data, volume_affine, reference_affine, reference_size, interp_oder=3, fill_value=0):
+    """
+    reslice volume_data to reference_affine and reference_size
+
+    volume_data (np.array): 2D, 3D, or 4D data to be resliced 
+    volume_affine (np.array): 4x4 transformation matrix of volume_data
+    reference_affine (np.array): 4x4 transformation matrix of target space
+    reference_size (list): size of target space
+    interp_oder (int): spline interpolation order
+    fill_value (float): value for out of bound voxels
+    """
+
+    if volume_data.ndim < 2 or volume_data.ndim > 4:
+        raise ValueError('input must be 2D, 3D, or 4D')
+    if len(reference_size) != 3:
+        raise ValueError('reference_size must be 3D')
+
+    # ensure input array has 4 dimensions
+    while volume_data.ndim < 4:
+        volume_data = np.expand_dims(volume_data, axis=-1)
+
+    grid = np.mgrid[[slice(0, i) for i in reference_size]].reshape((3, -1))
     grid = np.vstack((grid, np.ones(grid.shape[1])))
-    T = sp.linalg.lstsq(ref_affine, target_affine)[0] # calculate -> inv(ref_affine) @ target_affine
+    T = sp.linalg.lstsq(volume_affine, reference_affine)[0] # calculate -> inv(ref_affine) @ target_affine
     grid = T @ grid
-    resampled_vol = sp.ndimage.map_coordinates(ref_vol, grid[0:3,:], order=interp_oder, cval=fill_value).reshape(target_size)
-    return resampled_vol
+
+    resampled_vol = []
+    for vol_data in np.moveaxis(volume_data, 3, 0):
+        print(vol_data.shape)
+        resampled_vol.append(sp.ndimage.map_coordinates(vol_data, grid[0:3,:], order=interp_oder, cval=fill_value).reshape(reference_size))
+
+    return np.moveaxis(np.asarray(resampled_vol), 0, -1).squeeze()
+
+
+def reslice_to_standard_sapce(volume_data, volume_affine, interp_oder=3, fill_value=0):
+    reference_affine = np.diag([2, 2, 2, 1])
+    reference_affine[0:3,-1] = [-150, -150, -150]
+    reference_size = [150, 150, 150]
+    return reslice(volume_data, volume_affine, reference_affine, reference_size, interp_oder, fill_value)
