@@ -48,6 +48,14 @@ class volume:
     def transformation(self):
         return self._transformation
     
+    @property
+    def shape(self):
+        return (self._res['y'], self._res['x'], self._res['z'])
+    
+    @property
+    def fov(self):
+        return (self._fov['y'], self._fov['x'], self._fov['z'])
+    
 
 class adjustment_volume(volume):
     def __init__(self, xprot) -> None:
