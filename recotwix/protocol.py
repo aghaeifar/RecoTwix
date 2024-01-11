@@ -9,6 +9,7 @@ class protocol_parse():
     res = {'x':0, 'y':0, 'z':0}
     fov = {'x':0, 'y':0, 'z':0}
     slice_thickness = 0
+    slice_order = None
     isParallelImaging = False
     isRefScanSeparate = False
     acceleration_factor = [0, 0]
@@ -60,6 +61,7 @@ class protocol_parse():
         self.FA                  = np.array(hdr['Meas']['adFlipAngleDegree'][0])
         # self.OS']                  = np.array(hdr['Meas']['alTI']) / 1000 # in ms
         self.coilName            = hdr['MeasYaps']['sCoilSelectMeas']['aRxCoilSelectData'][0]['asList'][0]['sCoilElementID']['tCoilID']
+        self.slice_order         = [int(num) for num in hdr['Meas']['chronSliceIndices'].split() if int(num) != -1]
         # read shims
         alShimCurrent = hdr['Phoenix']['sGRADSPEC'].get('alShimCurrent', 0.0)
         self.shims               = {'A00': hdr['MeasYaps']['sTXSPEC']['asNucleusInfo'][0]['lFrequency'],
