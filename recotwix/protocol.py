@@ -1,6 +1,7 @@
-'''
+"""
 extract the necessary protocol information from twix header
-'''
+"""
+
 import numpy as np
 import math 
 
@@ -13,7 +14,7 @@ class protocol_parse():
     isParallelImaging = False
     isRefScanSeparate = False
     acceleration_factor = [0, 0]
-    isPartialFourierRO = False
+    isPartialFourierRO  = False
     isPartialFourierPE1 = False
     isPartialFourierPE2 = False
     protName = ''
