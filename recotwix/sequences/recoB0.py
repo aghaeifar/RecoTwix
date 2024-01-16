@@ -54,7 +54,16 @@ class recoB0(recotwix):
         self.img = torch.empty((1)) # save memory
 
     ##########################################################
-    def get_b0hz(self, b0_uw:torch.Tensor = None, offset = 0):
+    def get_b0(self):
+        return self.img_b0
+    
+    def get_mag(self):
+        return self.img_mag
+    
+    def get_mask(self):
+        return self.img_mask
+
+    def get_b0hz(self, b0_uw:torch.Tensor=None, offset=0):
         if b0_uw is None:
             b0_uw = self._unwrap_b0()
         if b0_uw.shape != self.img_b0.shape:
@@ -72,7 +81,7 @@ class recoB0(recotwix):
             return None
 
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        handle   = ctypes.CDLL(os.path.join(dir_path, "..", "utils", "lib", "libunwrap_b0.so")) 
+        handle   = ctypes.CDLL(os.path.join(dir_path, "..", "..", "utils", "lib", "libunwrap_b0.so")) 
         handle.unwrap_b0.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=self.img_b0.ndim, flags='F'),
                                      np.ctypeslib.ndpointer(np.float32, ndim=self.img_b0.ndim, flags='F'),
                                      ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
