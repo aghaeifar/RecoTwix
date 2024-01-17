@@ -1,7 +1,6 @@
 import os
-import math
-from typing import Any
 import numpy as np
+import nibabel as nib 
 from . import transformation as T
 import twixtools.twixprot as twixprot
 
@@ -18,7 +17,6 @@ class volume_orientation:
     _name = None
 
     def __init__(self, volume_structure=None, res=None, thickness=None, name=None) -> None:
-        
         v = volume_structure
         self._norm = [v['sNormal'].get('dSag',0), v['sNormal'].get('dCor',0), v['sNormal'].get('dTra',0)]
         self._rot = v.get('dInPlaneRot', 0)
@@ -42,8 +40,7 @@ class volume_orientation:
         self._name = name
 
     def write_nifti(self, filename):
-        import nibabel as nib 
-        vol = np.ones((self._res['y'], self._res['x'], self._res['z']))
+        vol = np.ones(self.shape, dtype=np.uint8)
         img = nib.Nifti1Image(vol, self._affine)
         nib.save(img, filename)
 
@@ -60,7 +57,7 @@ class volume_orientation:
     
     @property
     def shape(self):
-        return (self._res['y'], self._res['x'], self._res['z'])
+        return (self._res['y'], self._res['x'], self._res['z'])  # swap x and y to match the corresponding affine matrix convention
     
     @property
     def fov(self):
@@ -86,20 +83,23 @@ class volume():
     def __len__(self):
         return len(self._vol_box)
     
+    def __iter__(self):
+        return iter(self._vol_box)
+    
 
 class volume_adjustment(volume):
-    def __init__(self, xprot=None) -> None:
+    def __init__(self, xprot=dict()) -> None:
         super().__init__('adjustment')
-        if xprot is None:
+        if xprot.get('sAdjData', None) is None:
+            return
+        if xprot['sAdjData'].get('sAdjVolume', None) is None:
             return
         self.add(volume_orientation(xprot['sAdjData']['sAdjVolume']))
 
 
 class volume_slice(volume):
-    def __init__(self, xprot=None) -> None:
+    def __init__(self, xprot=dict()) -> None:
         super().__init__('slice')
-        if xprot is None:
-            return
         if xprot.get('sSliceArray', None) is None:
             return
         if xprot['sSliceArray'].get('asSlice', None) is None:
@@ -114,10 +114,8 @@ class volume_slice(volume):
         
 
 class volume_ptx(volume):
-    def __init__(self, xprot=None) -> None:
+    def __init__(self, xprot=dict()) -> None:
         super().__init__('pTx')
-        if xprot is None:
-            return
         if xprot.get('sPTXData', None) is None:
             return
         if xprot['sPTXData'].get('asPTXVolume', None) is None:
@@ -158,7 +156,6 @@ class prot_volumes:
         self._all_volumes['ptx'] = volume_ptx(self.xprot)
         self._all_volumes['adj'] = volume_adjustment(self.xprot)
         self.num_volumes = sum([len(v) for v in self._all_volumes.values()])
-
 
     def get_volume_names(self):
         return [name for name in self._all_volumes.keys() if len(self._all_volumes[name])>0]
