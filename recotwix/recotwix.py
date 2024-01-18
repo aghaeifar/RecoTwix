@@ -19,7 +19,7 @@ class recotwix():
     dim_free = None
     dim_size = None
     dim_info = None
-    transformation = dict()
+    transformation = None
     nii_affine     = None
     slice_reorder_ind = None
     
@@ -50,6 +50,7 @@ class recotwix():
         self.dim_enc  = [self.dim_info['Col']['ind'], self.dim_info['Lin']['ind'], self.dim_info['Par']['ind']]
         self.dim_free = ('Ide', 'Idd', 'Idc', 'Idb', 'Ida', 'Seg', 'Set', 'Rep', 'Phs', 'Eco', 'Ave')
         
+        self.transformation = dict()
         self.prot = protocol_parse(self.twixmap)
         self._extract_transformation()
 
@@ -129,6 +130,7 @@ class recotwix():
     ##########################################################
 
     def _getkspace(self):
+        print('Extracting kspace...')
         kspace = torch.from_numpy(self.twixmap['image'][:])
         return kspace.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(self.slice_reorder_ind))
 
@@ -189,7 +191,7 @@ class recotwix():
         if self.dim_info['Par']['len'] == 1 and self.dim_info['Sli']['len'] == 1:
             volume = volume.unsqueeze(dim=2)
 
-        img = nib.Nifti1Image(volume.numpy(), self.transformation['nii_affine'])
+        img = nib.Nifti1Image(volume.detach().cpu().numpy().astype(np.float32), self.transformation['nii_affine'])
         nib.save(img, filename)
 
         
