@@ -22,26 +22,36 @@ cfl_order = [
     'BATCH_DIM'
 ]
 
+recotwix_order = [
+    'Ide',
+    'Idd',
+    'Idc',
+    'Idb',
+    'Ida',
+    'Seg',
+    'Set',
+    'Rep',
+    'Phs',
+    'Eco',
+    'Par',
+    'Sli',
+    'Ave',
+    'Lin',
+    'Cha',
+    'Col'
+]
+
 dim_map = {
-    'Ide': 'MAPS_DIM',
-    'Idd': 'COEFF2_DIM',
-    'Idc': 'COEFF_DIM',
-    'Idb': 'ITER_DIM',
-    'Ida': 'LEVEL_DIM',
-    'Seg': 'BATCH_DIM',
-    'Set': 'CSHIFT_DIM',
-    'Rep': 'TIME_DIM',
-    'Phs': 'TIME2_DIM',
-    'Eco': 'TE_DIM',
     'Par': 'PHS2_DIM',
-    'Sli': 'SLICE_DIM',
-    'Ave': 'AVG_DIM',
+    'Sli': 'TE_DIM',
     'Lin': 'PHS1_DIM',
     'Cha': 'COIL_DIM',
     'Col': 'READ_DIM'
 }
 
-axis_cha = 14
+loop_axis = recotwix_order.index('Cha')
+flatten_axis = cfl_order.index('COEFF_DIM')
+bart_par_dim = cfl_order.index('TE_DIM')
 
 ##########################################################
 # FFT & iFFT
@@ -65,12 +75,23 @@ def fftnd(img:torch.Tensor, axes=[-1]):
 # adapting to bart CFL format, see https://bart-doc.readthedocs.io/en/latest/data.html or https://github.com/mrirecon/bart/blob/master/src/misc/mri.h
 # Dimensions in BART (/src/misc/mri.h): [READ_DIM, PHS1_DIM, PHS2_DIM, COIL_DIM, MAPS_DIM, TE_DIM, COEFF_DIM, COEFF2_DIM, ITER_DIM, CSHIFT_DIM, TIME_DIM, TIME2_DIM, LEVEL_DIM, SLICE_DIM, AVG_DIM, BATCH_DIM]
 def toBART(kspace:torch.Tensor):
-    return torch.movedim(kspace, torch.arange(kspace.ndim).tolist(), [cfl_order.index(v) for v in dim_map.values()])
+    kspace = torch.unsqueeze(kspace, -1)
+    kspace = torch.swapdims(kspace, recotwix_order.index('Ida'), -1)
+    kspace = torch.movedim(kspace, [recotwix_order.index(v) for v in dim_map.keys()], [cfl_order.index(v) for v in dim_map.values()])
+    unflatten_shape = [*kspace.shape][flatten_axis:]
+    kspace = torch.flatten(kspace, flatten_axis, -1)
+    kspace = kspace[(...,) + (None,)*(len(cfl_order) - kspace.ndim)] # add extra dims to match number of dimensions if is not already!
+    return kspace, unflatten_shape
 
 # converting BART data format to recoMRD data format
-def fromBART(kspace:torch.Tensor):
-    kspace = kspace[(...,) + (None,)*(len(dim_map) - kspace.ndim)] # add extra dims to match original format size if is not already!
-    return torch.movedim(kspace, torch.arange(kspace.ndim).tolist(), [list(dim_map.values()).index(v) for v in cfl_order])
+def fromBART(kspace:torch.Tensor, unflatten_shape):
+    kspace = kspace[(...,) + (None,)*(len(cfl_order) - kspace.ndim)] # add extra dims to match number of dimensions if is not already!
+    kspace = torch.squeeze(kspace, tuple(range(flatten_axis+1, kspace.ndim)))
+    kspace = torch.unflatten(kspace, flatten_axis, unflatten_shape)
+    kspace = torch.movedim(kspace, [cfl_order.index(v) for v in dim_map.values()], [recotwix_order.index(v) for v in dim_map.keys()])
+    kspace = torch.swapaxes (kspace, -1, recotwix_order.index('Ida'))
+    kspace = torch.squeeze(kspace, -1)
+    return kspace
 
 
 ##########################################################
@@ -99,21 +120,17 @@ def calc_coil_sensitivity(acs:torch.Tensor, dim_enc, method='caldir'):
     if method.lower() not in all_methods:
         print(f'Given method is not valid. Choose between {", ".join(all_methods)}')
         return
-
-    acs_bart = toBART(acs).numpy() # adapting to bart CFL format
-    
-    bart_slc_dim = cfl_order.index('SLICE_DIM')        
+    acs_bart, unflatten_shape = toBART(acs)# adapting to bart CFL format
     if method.lower() == 'espirit'.lower():
-        coil_sens = bart(1, f'-p {1<<bart_slc_dim} -e {acs_bart.shape[bart_slc_dim]} ecalib -m 1 -d 4', acs_bart)
-        coil_sens = fromBART(torch.from_numpy(coil_sens))
+        coil_sens = bart(1, f'-p {1<<bart_par_dim} -e {acs_bart.shape[bart_par_dim]} ecalib -m 1 -d 4', acs_bart.detach().cpu().numpy() )        
+        coil_sens = fromBART(torch.from_numpy(coil_sens), unflatten_shape)
 
     elif method.lower() == 'caldir'.lower():
         kernel_size = max([acs.shape[d] for d in dim_enc])//2
         if kernel_size >= acs.shape[dim_enc[0]] :
             kernel_size = acs.shape[dim_enc[0]] // 2
-        print(f'kernel_size: {kernel_size}')
-        coil_sens = bart(1, '-p {} -e {} caldir {}'.format(1<<bart_slc_dim, acs_bart.shape[bart_slc_dim], kernel_size), acs_bart)
-        coil_sens = fromBART(torch.from_numpy(coil_sens))
+        coil_sens = bart(1, '-p {} -e {} caldir {}'.format(1<<bart_par_dim, acs_bart.shape[bart_par_dim], kernel_size), acs_bart.detach().cpu().numpy())
+        coil_sens = fromBART(torch.from_numpy(coil_sens), unflatten_shape)
 
     return coil_sens
 
@@ -122,17 +139,22 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
     print(f'Combining coils... ')
     torch.cuda.empty_cache()
     # sos    
-    volume       = kspace_to_image(kspace, dim_enc=dim_enc, dim_loop=axis_cha)       
-    volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, axis_cha, keepdims=True)) # is needed in 'bart' to calculate scale factor
-    bart_slc_dim = cfl_order.index('SLICE_DIM')
+    volume       = kspace_to_image(kspace, dim_enc=dim_enc, dim_loop=loop_axis)       
+    volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, loop_axis, keepdims=True)) # is needed in 'bart' to calculate scale factor
     if rss == False:
+        recon        = list() 
         GPU          = '-g' # if kspace.device == 'cuda' else ''
         l2_reg       = 1e-4
-        kspace       = toBART(kspace)
-        coil_sens    = toBART(coil_sens)
-        scale_factor = torch.quantile(volume_comb, 0.99).tolist()        
-        recon        = bart(1, f'-p {1<<bart_slc_dim} -e {kspace.shape[bart_slc_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', kspace.numpy(), coil_sens.numpy())
-        volume_comb  = fromBART(torch.from_numpy(recon))
+        scale_factor = torch.quantile(volume_comb, 0.99).tolist()         
+        coil_sens    = toBART(coil_sens)[0].detach().cpu().numpy()
+        kspace, unflatten_shape  = toBART(kspace)
+        for chunk in kspace.split(1, dim=flatten_axis):  
+            comb = bart(1, f'-p {1<<bart_par_dim} -e {kspace.shape[bart_par_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', chunk.detach().cpu().numpy(), coil_sens)
+            comb = torch.from_numpy(comb)
+            recon.append(comb[(...,) + (None,)*(kspace.ndim - comb.ndim)]) # we need to add singleton dimensions to match the number of dimensions of kspace. It is needed for concatenation
+
+        recon = torch.cat(recon, dim=flatten_axis)
+        volume_comb  = fromBART(recon, unflatten_shape)
   
     return volume_comb
 
@@ -200,10 +222,10 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     # kspace smoothed with gaussian profile and masked central region
     kspace_symmetric = kspace.clone()
     kspace_symmetric = torch.swapaxes(torch.swapaxes(kspace_symmetric, dim_pf, -1) * gauss_pdf, -1, dim_pf)
-    angle_image_symmetric  = kspace_to_image(kspace_symmetric, dim_enc=dim_enc, dim_loop=axis_cha) # along non-pf encoding directions
+    angle_image_symmetric  = kspace_to_image(kspace_symmetric, dim_enc=dim_enc, dim_loop=loop_axis) # along non-pf encoding directions
     angle_image_symmetric /= torch.abs(angle_image_symmetric) # normalize to unit circle       
 
-    kspace_full = kspace_to_image(kspace, dim_enc=dim_nonpf_enc, dim_loop=axis_cha) # along non-pf encoding directions
+    kspace_full = kspace_to_image(kspace, dim_enc=dim_nonpf_enc, dim_loop=loop_axis) # along non-pf encoding directions
     kspace_full_clone = kspace_full.clone()
     # free memory
     del kspace_symmetric 
@@ -211,12 +233,12 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     torch.cuda.empty_cache()
 
     for ind in range(number_of_iterations):
-        image_full  = kspace_to_image(kspace_full, dim_enc=[dim_pf], dim_loop=axis_cha)
+        image_full  = kspace_to_image(kspace_full, dim_enc=[dim_pf], dim_loop=loop_axis)
         image_full  = torch.abs(image_full) * angle_image_symmetric
-        kspace_full = image_to_kspace(image_full, dim_enc=[dim_pf], dim_loop=axis_cha)
+        kspace_full = image_to_kspace(image_full, dim_enc=[dim_pf], dim_loop=loop_axis)
         torch.moveaxis(kspace_full, dim_pf, 0)[mask] = torch.moveaxis(kspace_full_clone, dim_pf, 0)[mask] # replace elements of kspace_full from original kspace_full_clone
 
-    kspace_full = image_to_kspace(kspace_full, dim_enc=dim_nonpf_enc, dim_loop=axis_cha)
+    kspace_full = image_to_kspace(kspace_full, dim_enc=dim_nonpf_enc, dim_loop=loop_axis)
     # remove all samples that was not part of the original dataset (e.g. acceleartion)        
     mask = mask_clone
     mask[ind_one[0]%acc_pf::acc_pf] = True
