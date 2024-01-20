@@ -51,6 +51,13 @@ class protocol_parse():
         self.isParallelImaging   = True if hdr['MeasYaps']['sPat']['ucPATMode'] == 2 else False
         self.isRefScanSeparate   = True if hdr['MeasYaps']['sPat']['ucRefScanMode'] == 4 else False
         self.acceleration_factor = [hdr['MeasYaps']['sPat']['lAccelFactPE'], hdr['MeasYaps']['sPat']['lAccelFact3D']]
+        # sanity check
+        if self.isParallelImaging:
+            if twix_obj['image'].kspace_center_lin != twix_obj['refscan'].kspace_center_lin and \
+               twix_obj['image'].kspace_center_par != twix_obj['refscan'].kspace_center_par and \
+               not self.isRefScanSeparate:
+                print(f"Warning!\033[93mkspace_center_lin and kspace_center_par are not identical in image and internal refscan!\033[0m")
+
         
         img_col = img.shape[img.dims.index('Col')] if img.flags['remove_os'] else img.shape[img.dims.index('Col')]//2
         self.isPartialFourierRO  = True if abs(self.res['x'] - img_col) > 4 else False

@@ -52,7 +52,7 @@ class recotwix():
         
         self.transformation = dict()
         self.prot = protocol_parse(self.twixmap)
-        self._extract_transformation()
+        self._extract_transformation()        
 
 
     def __str__(self):
@@ -61,8 +61,8 @@ class recotwix():
         s += f"  Dims: {list(self.dim_info.keys())}\n"
         s += f"  Size: {self.dim_size}\n"
         s += f"  Resolution (x y z): {self.prot.res['x']} {self.prot.res['y']} {self.prot.res['z']}\n"
-        s += f"  PartialFourier (ro, pe, pe3d): {self.prot.isPartialFourierRO} {self.prot.isPartialFourierPE1} {self.prot.isPartialFourierPE2}\n"
-        s += f"  isParallelImaging: {self.prot.isParallelImaging}\n"
+        s += f"  Partial Fourier (ro, pe, pe3d): {self.prot.isPartialFourierRO} {self.prot.isPartialFourierPE1} {self.prot.isPartialFourierPE2}\n"
+        s += f"  Parallel Imaging: {self.prot.isParallelImaging}\n"
         s += f"  Acceleration Factor: {self.prot.acceleration_factor}\n"
         return s
 
@@ -70,10 +70,9 @@ class recotwix():
     def runReco(self, method_sensitivity='caldir'):     
         torch.cuda.empty_cache()   
 
-        kspace = self._getkspace()
-        print(f'kspace shape: {kspace.shape}')
+        kspace = self._getkspace()        
         kspace = self.correct_scan_size(kspace, scantype='image')
-        print(f'kspace corrected shape: {kspace.shape}')
+        
         # Partial Fourier?
         if self.prot.isPartialFourierRO:
             kspace = POCS(kspace, dim_enc=self.dim_enc, dim_pf=self.dim_info['Col']['ind'])
@@ -84,8 +83,7 @@ class recotwix():
 
         # Parallel Imaging?
         if self.prot.isParallelImaging:
-            self.twixmap['refscan'].flags['zf_missing_lines'] = False
-            self.twixmap['refscan'].flags['skip_empty_lead']  = True
+            self.twixmap['refscan'].flags['zf_missing_lines'] = not self.prot.isRefScanSeparate 
             acs = torch.from_numpy(self.twixmap['refscan'][:])
             acs = self.correct_scan_size(acs, scantype='refscan')
         else:
@@ -105,12 +103,17 @@ class recotwix():
     def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
         # Note: this function suppose oversampling is removed
         import torch.nn.functional as F
+        print(f'kspace uncorrected shape: {kspace.shape}, scantype: {scantype}')
         col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap[scantype].kspace_center_col
         lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap[scantype].kspace_center_lin
         par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap[scantype].kspace_center_par
+        if kspace.shape[self.dim_info['Lin']['ind']] == self.hdr['Meas']['iPEFTLength']:
+            lin_diff = 0
+        if kspace.shape[self.dim_info['Par']['ind']] == self.hdr['Meas']['i3DFTLength']:
+            par_diff = 0
         # print(f'iRoFTLength: {self.hdr["Meas"]["iRoFTLength"]}, iPEFTLength: {self.hdr["Meas"]["iPEFTLength"]}, i3DFTLength: {self.hdr["Meas"]["i3DFTLength"]}')
-        # print(f'col_diff: {col_diff}, lin_diff: {lin_diff}, par_diff: {par_diff}')
         # print(f'kspace_center_col: {self.twixmap[scantype].kspace_center_col}, kspace_center_lin: {self.twixmap[scantype].kspace_center_lin}, kspace_center_par: {self.twixmap[scantype].kspace_center_par}')
+        # print(f'col_diff: {col_diff}, lin_diff: {lin_diff}, par_diff: {par_diff}')
         # print(f'res x: {self.prot.res["x"] }')
         # There might be asymmetric echo; thus, padding in the left and right differ. Note we suppose asymmetry is in the left side which should be valid in the most cases where shortening echo-time is the goal.
         col_diff_l = col_diff // 2 # because oversampling is removed before
@@ -124,14 +127,16 @@ class recotwix():
         pad[self.dim_info['Par']['ind']*2]   = int(par_diff)
         pad[self.dim_info['Par']['ind']*2+1] = int(par_diff)
         pad.reverse()
-        return F.pad(kspace, pad, 'constant', 0)
+        kspace = F.pad(kspace, pad, 'constant', 0)
+        print(f'kspace corrected shape  : {kspace.shape}, scantype: {scantype}')
+        return kspace
 
 
     ##########################################################
 
-    def _getkspace(self):
+    def _getkspace(self, scantype='image'):
         print('Extracting kspace...')
-        kspace = torch.from_numpy(self.twixmap['image'][:])
+        kspace = torch.from_numpy(self.twixmap[scantype][:])
         return kspace.index_select(self.dim_info['Sli']['ind'], torch.from_numpy(self.slice_reorder_ind))
 
     def _slice_reorder(self):
