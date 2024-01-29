@@ -2,8 +2,10 @@ import os
 import ctypes
 import torch
 import numpy as np
-from recotwix import recotwix, kspace_to_image
 from math import pi as PI
+from scipy import ndimage
+from recotwix import recotwix, kspace_to_image, lib_folder
+
 
 class recoB0(recotwix):
     img_b0   = torch.empty([1])
@@ -86,16 +88,37 @@ class recoB0(recotwix):
             print(f'Only 3D or 4D data is supported for unwrapping. Input shape is {b0_size}')
             return None
 
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        handle   = ctypes.CDLL(os.path.join(dir_path, "..", "..", "utils", "lib", "libunwrap_b0.so")) 
-        handle.unwrap_b0.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=self.img_b0.ndim, flags='F'),
-                                     np.ctypeslib.ndpointer(np.float32, ndim=self.img_b0.ndim, flags='F'),
+        handle = ctypes.CDLL(os.path.join(lib_folder, 'libunwrap_b0.so')) 
+        handle.unwrap_b0.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=b0_rad.ndim, flags='F'),
+                                     np.ctypeslib.ndpointer(np.float32, ndim=b0_rad.ndim, flags='F'),
                                      ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         
         b0_rad = b0_rad.detach().cpu().numpy().copy(order='F')  
         b0_uw = np.zeros_like(b0_rad)
         handle.unwrap_b0(b0_rad, b0_uw, *b0_size[:4]) # [:4] -> always 4D shape to unwrapper
-        return (torch.from_numpy(b0_uw.copy(order='C')).moveaxis(-1, self.dim_info['Rep']['ind'])) 
+        return torch.from_numpy(b0_uw.copy(order='C')).moveaxis(-1, self.dim_info['Rep']['ind']) 
+    
+    ##########################################################
+    def mask_brain(self, brain_mag:torch.Tensor, erode_size=3):
+        print('Masking brain...')
+        if brain_mag.squeeze().ndim != 3:
+            print(f'Only 3D data is supported for masking. Input shape is {brain_mag.shape}')
+            return None
+        
+        handle = ctypes.CDLL(os.path.join(lib_folder, 'libbet2.so'))
+        handle.runBET.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
+                                  np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
+                                  ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        
+        brain_mag = brain_mag.detach().cpu().numpy().copy(order='F')  
+        mask = np.zeros_like(brain_mag)
+        handle.runBET(brain_mag, mask, *brain_mag.squeeze().shape) 
+        
+        if erode_size > 1:
+            mask = ndimage.binary_erosion(mask.squeeze(), structure=np.ones((erode_size,erode_size,erode_size)))
+            mask = mask.reshape(brain_mag.shape)
+
+        return torch.from_numpy(mask.copy(order='C').astype(np.float32))
 
                     
 
