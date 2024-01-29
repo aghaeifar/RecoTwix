@@ -1,3 +1,4 @@
+import os
 import torch
 import twixtools
 import numpy as np
@@ -5,6 +6,7 @@ from .protocol import protocol_parse
 from .reco_tools import POCS, coil_combination, calc_coil_sensitivity
 from .transformation import calc_nifti_affine
 
+lib_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'utils', 'lib')
 
 class recotwix(): 
     hdr      = {}
@@ -196,7 +198,7 @@ class recotwix():
         if self.dim_info['Par']['len'] == 1 and self.dim_info['Sli']['len'] == 1:
             volume = volume.unsqueeze(dim=2)
 
-        img = nib.Nifti1Image(volume.detach().cpu().numpy().astype(np.float32), self.transformation['nii_affine'])
+        img = nib.Nifti1Image(volume.detach().cpu().numpy(), self.transformation['nii_affine'])
         nib.save(img, filename)
 
         
