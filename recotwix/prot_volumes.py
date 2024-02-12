@@ -1,6 +1,8 @@
 import os
+from math import ceil
 import numpy as np
 import nibabel as nib 
+from nibabel.processing import resample_from_to
 from . import transformation as T
 import twixtools.twixprot as twixprot
 
@@ -23,7 +25,7 @@ class volume_orientation:
         self._pos = [v.get('sPosition', {}).get('dSag',0), v.get('sPosition', {}).get('dCor',0), v.get('sPosition', {}).get('dTra',0)]
         self._fov = {'x':v['dReadoutFOV'], 'y':v['dPhaseFOV'], 'z':v['dThickness']}
         if res is None:
-            res = {key: int(value) for key, value in self._fov.items()}
+            res = {key: ceil(value//2) for key, value in self._fov.items()}
         if thickness is None:
             thickness = self._fov['z'] / res['z']
         # Resampling fails when a volume with res['z'] = 1 is given.
@@ -43,9 +45,6 @@ class volume_orientation:
         vol = np.ones(self.shape, dtype=np.uint8)
         img = nib.Nifti1Image(vol, self._affine)
         nib.save(img, filename)
-
-    def data(self):
-        return np.ones(self.shape, dtype=np.float32)
             
     @property
     def affine(self):
@@ -74,6 +73,17 @@ class volume():
 
     def add(self, vol):
         self._vol_box.append(vol)
+
+    def get_combined(self):
+        fov, res = 300, 1.5
+        std_affine = np.hstack((np.eye(4,3)*res, np.array([-fov/2,-fov/2,-fov/2,1]).reshape(4,1)))
+        std_size   = [int(x) for x in [fov/res]*3]
+        img_out    = np.zeros(std_size)
+        for img in self._vol_box:
+            n = resample_from_to(nib.Nifti1Image(np.ones(img.shape), img.affine), (std_size, std_affine), order=0)
+            img_out += n.get_fdata()
+        return nib.Nifti1Image(img_out.astype(np.uint8), std_affine)
+        
 
     def __getitem__(self, index):
         if index >= len(self._vol_box):
