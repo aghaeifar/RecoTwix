@@ -2,6 +2,7 @@ import os
 import torch
 import twixtools
 import numpy as np
+import nibabel as nib 
 from .protocol import protocol_parse
 from .reco_tools import POCS, coil_combination, calc_coil_sensitivity
 from .transformation import calc_nifti_affine
@@ -181,24 +182,29 @@ class recotwix():
 
 
     ##########################################################
-    # Save a custom volume as nifti
-    # input must have same dimension ordering as dim_info
-    def write_nifti(self, volume:torch.Tensor, filename): 
-        import nibabel as nib 
-        if volume.squeeze().ndim > 4 :
-            print(f"{volume.ndim}D data is not supported")
-            return
-        
+    def reorder_dims(self, volume:torch.Tensor):
+        '''
+        reorder dimensions to bring spatial dimensions to the first three dimensions
+        '''
         dim = self.dim_info
-        # permute to match [PE, RO, SLC/PAR, REP]
+        # permute to match [PE, RO, SLC/PAR, REP, others]
         perm_ind = [dim['Lin']['ind'], dim['Col']['ind'], dim['Par']['ind'], dim['Sli']['ind'], dim['Rep']['ind'], dim['Cha']['ind']]
         perm_ind = perm_ind + [d['ind'] for d in dim.values() if d['ind'] not in perm_ind]
         volume = volume.permute(perm_ind) 
         volume = volume.squeeze()
         if self.dim_info['Par']['len'] == 1 and self.dim_info['Sli']['len'] == 1:
             volume = volume.unsqueeze(dim=2)
-
+        return volume
+    
+    # Save a custom volume as nifti
+    # input must have same dimension ordering as dim_info
+    def make_nifti(self, volume:torch.Tensor):        
+        if volume.squeeze().ndim > 4 :
+            print(f"{volume.ndim}D data is not supported")
+            return
+        
+        volume = self.reorder_dims(volume)
         img = nib.Nifti1Image(volume.detach().cpu().numpy(), self.transformation['nii_affine'])
-        nib.save(img, filename)
+        return img # can be save to nifti with to_filename(...) method
 
         
