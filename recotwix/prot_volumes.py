@@ -7,14 +7,12 @@ from . import transformation as T
 import twixtools.twixprot as twixprot
 
 
-class volume_orientation:
+class volume_orientation(nib.Nifti1Image):
     _norm = None # [norm_sag, norm_cor, norm_tra]
     _rot = None # inplane rotation (radians)
     _pos = None # offset from origin (mm)
     _fov = None # FoV (mm)
-    _res = None # resolution (voxels)
     _thickness = None # slice thickness (mm)
-    _affine = None
     _transformation = None    
     _name = None
 
@@ -33,30 +31,18 @@ class volume_orientation:
             res['z'] = 3
             thickness = thickness / 3
 
-        self._res = res  
         self._thickness = thickness
 
         dcm = T.calc_norm2dcm(self._norm[0], self._norm[1], self._norm[2], self._rot)
         self._transformation = T.calc_tranformation_matrix(dcm, self._pos)
-        self._affine = T.calc_nifti_affine(self._transformation, self._fov, self._res, self._thickness)
+        shape = (res['y'], res['x'], res['z'])  # swap x and y to match the corresponding affine matrix convention
+        affine = T.calc_nifti_affine(self._transformation, self._fov, res, thickness)
         self._name = name
-
-    def write_nifti(self, filename):
-        vol = np.ones(self.shape, dtype=np.uint8)
-        img = nib.Nifti1Image(vol, self._affine)
-        nib.save(img, filename)
+        super().__init__(np.ones(shape, dtype=np.uint8), affine)
             
-    @property
-    def affine(self):
-        return self._affine
-    
     @property
     def transformation(self):
         return self._transformation
-    
-    @property
-    def shape(self):
-        return (self._res['y'], self._res['x'], self._res['z'])  # swap x and y to match the corresponding affine matrix convention
     
     @property
     def fov(self):
