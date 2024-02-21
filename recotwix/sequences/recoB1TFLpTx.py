@@ -58,10 +58,10 @@ class recoB1TFLpTx(recotwix):
         self.params['pulse_duration'] = ICEProgramPara[14] * 1e-6 # convert to seconds
         self.params['rel_mode']       = ICEProgramPara[15]
         self.params['nTx_rel']        = ICEProgramPara[16]
-        self.params['pulse_integral'] = ICEProgramPara[16] * 1e-6 # convert to Volt * second
-        self.params['b0_dTE']         = ICEProgramPara[17] * 1e-6 # convert to seconds
+        self.params['pulse_integral'] = ICEProgramPara[17] * 1e-6 # convert to Volt * second
+        self.params['b0_dTE']         = ICEProgramPara[18] * 1e-6 # convert to seconds
         self.nTx = self.hdr['Meas']['lNumberOfTXCalibDateTime']
-        
+
         if self.params['nTx_abs'] != self.params['nTx_rel']:
             print(f'\033[93mNumber of absolute and relative transmit channels do not match: {self.params["nTx_abs"]} vs {self.params["nTx_rel"]}\033[0m')
             return
@@ -96,7 +96,7 @@ class recoB1TFLpTx(recotwix):
         # restore the original shape
         rshp = list(sat.shape)
         rshp.insert(0, rshp.pop(rep_ind))
-        self.img_fa = torch.moveaxis(self.img_fa.reshape(rshp), 0, rep_ind) 
+        self.img_fa = torch.moveaxis(self.img_fa.reshape(rshp), 0, rep_ind)         
         self.img_b1 = self.img_fa / (GAMMA_HZ * 360.0 * self.params['pulse_integral']) * 1e9 # convert to nT/Volt 
         self.img_cp = torch.sum(self.img_fa * self.seqTxScaleFactor.view((-1,)+(1,)*(self.img_fa.dim()-rep_ind-1)), dim=rep_ind, keepdim=True) # sum over all transmit channels
         
