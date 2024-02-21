@@ -66,7 +66,7 @@ class volume():
         std_size   = [int(x) for x in [fov/res]*3]
         img_out    = np.zeros(std_size)
         for img in self._vol_box:
-            n = resample_from_to(nib.Nifti1Image(np.ones(img.shape), img.affine), (std_size, std_affine), order=0)
+            n = resample_from_to(img, (std_size, std_affine), order=0)
             img_out += n.get_fdata()
         return nib.Nifti1Image(img_out.astype(np.uint8), std_affine)
         
@@ -117,8 +117,8 @@ class volume_ptx(volume):
         if xprot['sPTXData'].get('asPTXVolume', None) is None:
             return
         
-        for pTxVol in xprot['sPTXData']['asPTXVolume']:            
-            self.add(volume_orientation(pTxVol))  
+        for pTxVol in xprot['sPTXData']['asPTXVolume']:        
+            self.add(volume_orientation(pTxVol['sSliceData']))  
 
 
 class prot_volumes:
