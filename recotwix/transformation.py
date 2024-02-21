@@ -39,11 +39,10 @@ def calc_nifti_affine(transformation, fov, res, thickness):
     offset = T @ corner_mm
     translation_affine = np.eye(4)
     translation_affine[:,-1] = offset
+    # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here (head first/supine).
+    LPS_to_RAS = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
 
-    # LPS to RAS, Note LPS and PCS (patient coordinate system [Sag, Cor, Tra] ) are identical here 
-    PatientToTal = np.diag([-1, -1, 1, 1]) # Flip mm coords in x and y directions
-
-    affine = PatientToTal @ translation_affine @ rotation_affine @ scaling_affine
+    affine = LPS_to_RAS @ translation_affine @ rotation_affine @ scaling_affine
     return affine
 
 
