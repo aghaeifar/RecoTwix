@@ -24,6 +24,8 @@ class protocol_parse():
     OS = 0
     coilName = ''
     shims = {'A00':0, 'X':0, 'Y':0, 'Z':0, 'A20':0, 'A21':0, 'B21':0, 'A22':0, 'B22':0, 'A30':0, 'A31':0, 'B31':0, 'A32':0}
+    ref_voltage = 0
+    rf_voltage  = [0]
 
 
     def __init__(self, twix_obj):
@@ -70,6 +72,9 @@ class protocol_parse():
         # self.OS']                  = np.array(hdr['Meas']['alTI']) / 1000 # in ms
         self.coilName            = hdr['MeasYaps']['sCoilSelectMeas']['aRxCoilSelectData'][0]['asList'][0]['sCoilElementID']['tCoilID']
         self.slice_order         = [int(num) for num in hdr['Meas']['chronSliceIndices'].split() if int(num) != -1]
+        # transmit voltage
+        self.ref_voltage = hdr['MeasYaps']['sTXSPEC']['asNucleusInfo'][0]['flReferenceAmplitude']
+        self.rf_voltage  = [rf.get('flAmplitude', 0.0) for rf in hdr['MeasYaps']['sTXSPEC']['aRFPULSE']]
         # read shims
         alShimCurrent = hdr['Phoenix']['sGRADSPEC'].get('alShimCurrent', 0.0)
         self.shims               = {'A00': hdr['MeasYaps']['sTXSPEC']['asNucleusInfo'][0]['lFrequency'],
