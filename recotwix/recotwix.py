@@ -97,7 +97,7 @@ class recotwix():
 
         if method_sensitivity is not None:
             coils_sensitivity = calc_coil_sensitivity(acs, dim_enc=self.dim_enc, method=method_sensitivity)
-            self.img = coil_combination(kspace, coil_sens=coils_sensitivity, dim_enc=self.dim_enc)
+            self.img = coil_combination(kspace, coil_sens=coils_sensitivity, dim_enc=self.dim_enc, supress_output=True)
         else:
             self.img = coil_combination(kspace, coil_sens=None, dim_enc=self.dim_enc, rss=True)
 
@@ -171,11 +171,10 @@ class recotwix():
         self.transformation['mat44'] = self.transformation['soda'].mean(axis=0)
         self._slice_reorder()
         
-        # Here we swap order of x and y because we would like to have PE and RO as the first and the second dimensions, respectively, in nifti file.
-        # flipping volume along its center 
+        # flipping volume along its center, experimentally discovered. We should be able to do this in the volume data as well (flipping along each axis)
         res =self.prot.res
-        flip_affine = np.diag([-1, -1, -1 if self.prot.is3D else 1, 1]) 
-        flip_affine[:,-1] = [res['y'], res['x'], res['z'] if self.prot.is3D else 0, 1]
+        flip_affine = np.diag([-1, -1, -1 if self.prot.is3D else 1, 1])  
+        flip_affine[:,-1] = [res['y'], res['x'], res['z'] if self.prot.is3D else 0, 1] # Here we swap order of x and y because we have PE as the first dimension in nifti file.
 
         affine = calc_nifti_affine(self.transformation['mat44'], self.prot.fov, self.prot.res, self.prot.slice_thickness)
         self.transformation['nii_affine'] = affine @ flip_affine
