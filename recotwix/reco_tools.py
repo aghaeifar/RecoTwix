@@ -97,17 +97,17 @@ def fromBART(kspace:torch.Tensor, unflatten_shape):
 
 ##########################################################
 # applying iFFT to kspace and build image
-def kspace_to_image(kspace:torch.Tensor, dim_enc=None, dim_loop=None):
+def kspace_to_image(kspace:torch.Tensor, dim_enc=None, dim_loop=None, showProgress=True):
     img = torch.zeros_like(kspace, dtype=kspace.dtype, device=kspace.device)
-    for cha in tqdm(range(kspace.shape[dim_loop]), desc='k-space to image'):
+    for cha in tqdm(range(kspace.shape[dim_loop]), desc='k-space to image', disable=not showProgress):
         img.index_copy_(dim_loop, torch.Tensor([cha]).long().to(kspace.device), 
                         ifftnd(kspace.index_select(dim_loop, torch.Tensor([cha]).int().to(kspace.device)), axes=dim_enc)) 
     return img
 
 
-def image_to_kspace(img:torch.Tensor, dim_enc=None, dim_loop=None):
+def image_to_kspace(img:torch.Tensor, dim_enc=None, dim_loop=None, showProgress=True):
     kspace = torch.zeros_like(img, dtype=img.dtype, device=img.device)
-    for cha in tqdm(range(img.shape[dim_loop]), desc='image to k-space'):
+    for cha in tqdm(range(img.shape[dim_loop]), desc='image to k-space', disable=not showProgress):
         kspace.index_copy_(dim_loop, torch.Tensor([cha]).long().to(img.device), 
                             fftnd(img.index_select(dim_loop, torch.Tensor([cha]).int().to(img.device)), axes=dim_enc))
     return kspace
@@ -199,7 +199,7 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
 
 # Partial Fourier using Projection onto Convex Sets
 def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device='cuda'):
-    print(f'POCS reconstruction along dim = {dim_pf} started...')
+    print(f'POCS reconstruction along dim = {recotwix_order[dim_pf]} started...')
     torch.cuda.empty_cache()
     kspace = kspace.to(device)
 
@@ -226,10 +226,10 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     # kspace smoothed with gaussian profile and masked central region
     kspace_symmetric = kspace.clone()
     kspace_symmetric = torch.swapaxes(torch.swapaxes(kspace_symmetric, dim_pf, -1) * gauss_pdf, -1, dim_pf)
-    angle_image_symmetric  = kspace_to_image(kspace_symmetric, dim_enc=dim_enc, dim_loop=fft_loop_axis) # along non-pf encoding directions
+    angle_image_symmetric  = kspace_to_image(kspace_symmetric, dim_enc=dim_enc, dim_loop=fft_loop_axis, showProgress=False) # along non-pf encoding directions
     angle_image_symmetric /= torch.abs(angle_image_symmetric) # normalize to unit circle       
 
-    kspace_full = kspace_to_image(kspace, dim_enc=dim_nonpf_enc, dim_loop=fft_loop_axis) # along non-pf encoding directions
+    kspace_full = kspace_to_image(kspace, dim_enc=dim_nonpf_enc, dim_loop=fft_loop_axis, showProgress=False) # along non-pf encoding directions
     kspace_full_clone = kspace_full.clone()
     # free memory
     del kspace_symmetric 
@@ -237,12 +237,12 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     torch.cuda.empty_cache()
 
     for ind in range(number_of_iterations):
-        image_full  = kspace_to_image(kspace_full, dim_enc=[dim_pf], dim_loop=fft_loop_axis)
+        image_full  = kspace_to_image(kspace_full, dim_enc=[dim_pf], dim_loop=fft_loop_axis, showProgress=False)
         image_full  = torch.abs(image_full) * angle_image_symmetric
-        kspace_full = image_to_kspace(image_full, dim_enc=[dim_pf], dim_loop=fft_loop_axis)
+        kspace_full = image_to_kspace(image_full, dim_enc=[dim_pf], dim_loop=fft_loop_axis, showProgress=False)
         torch.moveaxis(kspace_full, dim_pf, 0)[mask] = torch.moveaxis(kspace_full_clone, dim_pf, 0)[mask] # replace elements of kspace_full from original kspace_full_clone
 
-    kspace_full = image_to_kspace(kspace_full, dim_enc=dim_nonpf_enc, dim_loop=fft_loop_axis)
+    kspace_full = image_to_kspace(kspace_full, dim_enc=dim_nonpf_enc, dim_loop=fft_loop_axis, showProgress=False)
     # remove all samples that was not part of the original dataset (e.g. acceleartion)        
     mask = mask_clone
     mask[ind_one[0]%acc_pf::acc_pf] = True
