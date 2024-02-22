@@ -151,13 +151,13 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
         kspace, unflatten_shape  = toBART(kspace)
         par_dim  = bart_slc_axis if bart_slc_axis>bart_flatten_axis else bart_flatten_axis
         loop_dim = bart_flatten_axis if bart_slc_axis>bart_flatten_axis else bart_slc_axis
-        sys.stdout = open(os.devnull, 'w') if supress_output else sys.__stdout__
+        sys.stdout, old = open(os.devnull, 'w') if supress_output else sys.stdout, sys.stdout
         for chunk in kspace.split(1, dim=loop_dim):             
             comb = bart(1, f'-p {1<<par_dim} -e {kspace.shape[par_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', chunk.detach().cpu().numpy(), coil_sens)
             comb = torch.from_numpy(comb)
             recon.append(comb[(...,) + (None,)*(kspace.ndim - comb.ndim)]) # we need to add singleton dimensions to match the number of dimensions of kspace. It is needed for concatenation
         
-        sys.stdout = sys.__stdout__
+        sys.stdout = old
         recon = torch.cat(recon, dim=loop_dim)
         volume_comb  = fromBART(recon, unflatten_shape)
     return volume_comb
