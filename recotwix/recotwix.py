@@ -106,7 +106,7 @@ class recotwix():
     def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
         # Note: this function suppose oversampling is removed
         import torch.nn.functional as F
-        print(f'kspace uncorrected shape: {kspace.shape}, scantype: {scantype}')
+        print(f'kspace original shape: {kspace.shape}, scantype: {scantype}')
         col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap[scantype].kspace_center_col
         lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap[scantype].kspace_center_lin
         par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap[scantype].kspace_center_par

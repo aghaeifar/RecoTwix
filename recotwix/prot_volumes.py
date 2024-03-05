@@ -16,7 +16,10 @@ class volume_orientation(nib.Nifti1Image):
     _transformation = None    
     _name = None
 
-    def __init__(self, volume_structure=None, res=None, thickness=None, name=None) -> None:
+    def __init__(self, dataobj=None, affine=None, header=None, volume_structure=None, res=None, thickness=None, name=None) -> None:
+        if dataobj is not None and affine is not None:
+            super().__init__(dataobj, affine, header=header)
+            return
         v = volume_structure
         self._norm = [v['sNormal'].get('dSag',0), v['sNormal'].get('dCor',0), v['sNormal'].get('dTra',0)]
         self._rot = v.get('dInPlaneRot', 0)
@@ -90,7 +93,7 @@ class volume_adjustment(volume):
             return
         if xprot['sAdjData'].get('sAdjVolume', None) is None:
             return
-        self.add(volume_orientation(xprot['sAdjData']['sAdjVolume']))
+        self.add(volume_orientation(volume_structure=xprot['sAdjData']['sAdjVolume']))
 
 
 class volume_slice(volume):
@@ -105,7 +108,7 @@ class volume_slice(volume):
         res['z'] = res['z'] if xprot['sKSpace']['ucDimension'] == 4 else 1 # in case of 2D scans, lPartitions is not valid
         positions = list()
         for SlcVol in xprot['sSliceArray']['asSlice']:                      
-            self.add(volume_orientation(SlcVol, res=res)) 
+            self.add(volume_orientation(volume_structure=SlcVol, res=res)) 
             positions.append([SlcVol.get('sPosition', {}).get('dSag',0) , SlcVol.get('sPosition', {}).get('dCor',0) , SlcVol.get('sPosition', {}).get('dTra',0)])
         
 
@@ -118,7 +121,7 @@ class volume_ptx(volume):
             return
         
         for pTxVol in xprot['sPTXData']['asPTXVolume']:        
-            self.add(volume_orientation(pTxVol['sSliceData']))  
+            self.add(volume_orientation(volume_structure=pTxVol['sSliceData']))  
 
 
 class prot_volumes:
