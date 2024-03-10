@@ -159,7 +159,7 @@ class prot_volumes:
     def get_volume_names(self):
         return [name for name in self._all_volumes.keys() if len(self._all_volumes[name])>0]
 
-    def get(self, volume_name):
+    def get(self, volume_name) -> volume:
         if volume_name in self._all_volumes:
             return self._all_volumes[volume_name] 
         else:
