@@ -3,14 +3,15 @@ import ctypes
 import torch
 import numpy as np
 from math import pi as PI
-from scipy import ndimage
+
 from recotwix import recotwix, kspace_to_image, lib_folder
 
 
 class recoB0(recotwix):
     img_b0   = torch.empty([1])
-    img_mag  = torch.empty([1])    
-    img_mask = torch.empty([1])
+    img_mag  = torch.empty([1])   
+    shims_firstorder = []
+    shims_highorder  = [] 
 
     def __init__(self, filename=None, device='cpu', method_sensitivity='caldir'):
         super().__init__(filename, device)  
@@ -26,6 +27,11 @@ class recoB0(recotwix):
             print(f"Error!\033[93mAt least two echoes are expected!\033[0m")
             return
         
+        keys = ['X', 'Y', 'Z']
+        self.shims_firstorder = [self.prot.shims[f'{key}'] for key in keys]
+        keys = ['A20', 'A21', 'B21', 'A22', 'B22', 'A30', 'A31', 'B31', 'A32']
+        self.shims_highorder = [self.prot.shims[f'{key}'] for key in keys]
+
         dim_eco = self.dim_info['Eco']['ind']
         dim_rep = self.dim_info['Rep']['ind']
         idx = torch.tensor([0, 1])
@@ -47,7 +53,6 @@ class recoB0(recotwix):
         # shims basis-map, b0map = (Eco2Repn - Eco1Repn) - (Eco2Rep1 - Eco1Rep1)
         if self.dim_info['Rep']['len'] > 1 :                
             self.img_b0 = self.img_b0 * torch.index_select(self.img_b0, dim_rep, idx[0]).conj()
-            self.img_b0.moveaxis(dim_rep, 0)[0,...] = torch.tensor(complex(1,0))
 
         # rescale the scale to [0,1], if not, the low signal regions will be masked out because of float32 precision
         self.img_b0 = self.img_b0.to(torch.complex128)
@@ -55,9 +60,11 @@ class recoB0(recotwix):
         min_value = torch.min(mag_b0)
         max_value = torch.max(mag_b0)
         scale = (mag_b0 - min_value) / (max_value - min_value)
+
         # scale to diminish low signal contributions in coil combination
         self.img_b0 = self.img_b0 * scale 
         self.img_b0 = torch.angle(torch.sum(self.img_b0, dim=self.dim_info['Cha']['ind'], keepdims=True)).to(torch.float32) # sum over coils
+            
         self.img = torch.empty((1)) # save memory
 
     ##########################################################
@@ -67,9 +74,6 @@ class recoB0(recotwix):
     def get_mag(self):
         return self.img_mag
     
-    def get_mask(self):
-        return self.img_mask
-
     def get_b0hz(self, b0_uw:torch.Tensor=None, offset=0):
         if b0_uw is None:
             b0_uw = self._unwrap_b0(self.img_b0)
@@ -98,27 +102,7 @@ class recoB0(recotwix):
         handle.unwrap_b0(b0_rad, b0_uw, *b0_size[:4]) # [:4] -> always 4D shape to unwrapper
         return torch.from_numpy(b0_uw.copy(order='C')).moveaxis(-1, self.dim_info['Rep']['ind']) 
     
-    ##########################################################
-    def mask_brain(self, brain_mag:torch.Tensor, erode_size=3):
-        print('Masking brain...')
-        if brain_mag.squeeze().ndim != 3:
-            print(f'Only 3D data is supported for masking. Input shape is {brain_mag.shape}')
-            return None
-        
-        handle = ctypes.CDLL(os.path.join(lib_folder, 'libbet2.so'))
-        handle.runBET.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
-                                  np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
-                                  ctypes.c_int, ctypes.c_int, ctypes.c_int]
-        
-        brain_mag = brain_mag.detach().cpu().numpy().copy(order='F')  
-        mask = np.zeros_like(brain_mag)
-        handle.runBET(brain_mag, mask, *brain_mag.squeeze().shape) 
-        
-        if erode_size > 1:
-            mask = ndimage.binary_erosion(mask.squeeze(), structure=np.ones((erode_size,erode_size,erode_size)))
-            mask = mask.reshape(brain_mag.shape)
 
-        return torch.from_numpy(mask.copy(order='C').astype(np.float32))
 
                     
 

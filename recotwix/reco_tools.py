@@ -1,7 +1,12 @@
 import sys, os
 import torch
+import ctypes
+import numpy as np
 from bart import bart
 from tqdm import tqdm
+from scipy import ndimage
+
+lib_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'utils', 'lib')
 
 
 cfl_order = [
@@ -144,9 +149,14 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
     volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, fft_loop_axis, keepdims=True)) # is needed in 'bart' to calculate scale factor
     if rss == False:
         recon        = list() 
-        GPU          = '-g' # if kspace.device == 'cuda' else ''
+        GPU          = '-g' if kspace.device == 'cuda' else ''
         l2_reg       = 1e-4
-        scale_factor = torch.quantile(volume_comb, 0.99).tolist()         
+
+        if volume_comb.numel() > 2**24:
+            indices = torch.linspace(0, volume_comb.numel() - 2, steps=2**24).long()
+            volume_comb = volume_comb.flatten()[indices]
+
+        scale_factor = torch.quantile(volume_comb, 0.99, interpolation='midpoint').tolist()    
         coil_sens    = toBART(coil_sens)[0].detach().cpu().numpy()
         kspace, unflatten_shape  = toBART(kspace)
         par_dim  = bart_slc_axis if bart_slc_axis>bart_flatten_axis else bart_flatten_axis
@@ -154,6 +164,7 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
         sys.stdout, old = open(os.devnull, 'w') if supress_output else sys.stdout, sys.stdout
         for chunk in kspace.split(1, dim=loop_dim):             
             comb = bart(1, f'-p {1<<par_dim} -e {kspace.shape[par_dim]} pics {GPU} -d4 -w {scale_factor} -R Q:{l2_reg} -S', chunk.detach().cpu().numpy(), coil_sens)
+            print(type(comb))
             comb = torch.from_numpy(comb)
             recon.append(comb[(...,) + (None,)*(kspace.ndim - comb.ndim)]) # we need to add singleton dimensions to match the number of dimensions of kspace. It is needed for concatenation
         
@@ -188,15 +199,14 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
 
 
     ##########################################################
-    def noise_whitening(self, kspace:torch.Tensor, noise:torch.Tensor):
+    def noise_whitening(kspace:torch.Tensor, noise:torch.Tensor):
         pass
 
     ##########################################################
-    def get_gfactor(self, kspace:torch.Tensor, coil_sens:torch.Tensor):
+    def get_gfactor(kspace:torch.Tensor, coil_sens:torch.Tensor):
         pass
     
     ##########################################################
-
 # Partial Fourier using Projection onto Convex Sets
 def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device='cuda'):
     print(f'POCS reconstruction along dim = {recotwix_order[dim_pf]} started...')
@@ -249,3 +259,30 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     torch.moveaxis(kspace_full, dim_pf, 0)[~mask] = 0       
 
     return kspace_full.to('cpu') 
+
+    ##########################################################
+def mask_brain(brain_mag:torch.Tensor, erode_size=3):
+    print('Masking brain...')
+    
+    if isinstance(brain_mag, np.ndarray):
+        brain_mag = torch.from_numpy(brain_mag)
+
+    if brain_mag.squeeze().ndim != 3:
+        print(f'Only 3D data is supported for masking. Input shape is {brain_mag.shape}')
+        return None
+    
+    handle = ctypes.CDLL(os.path.join(lib_folder, 'libbet2.so'))
+    handle.runBET.argtypes = [np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
+                              np.ctypeslib.ndpointer(np.float32, ndim=brain_mag.ndim, flags='F'),
+                              ctypes.c_int, ctypes.c_int, ctypes.c_int]
+
+    brain_mag = brain_mag.detach().cpu().numpy().copy(order='F')  
+    mask = np.zeros_like(brain_mag)
+    handle.runBET(brain_mag, mask, *brain_mag.squeeze().shape) 
+    
+    if erode_size > 1:
+        mask = ndimage.binary_erosion(mask.squeeze(), structure=np.ones((erode_size,erode_size,erode_size)))
+        mask = mask.reshape(brain_mag.shape)
+
+    return torch.from_numpy(mask.copy(order='C').astype(np.float32))
+    

@@ -7,8 +7,6 @@ from .protocol import protocol_parse
 from .reco_tools import POCS, coil_combination, calc_coil_sensitivity
 from .transformation import calc_nifti_affine
 
-lib_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'utils', 'lib')
-
 class recotwix(): 
     hdr      = {}
     prot     = {}
@@ -27,7 +25,7 @@ class recotwix():
     slice_reorder_ind = None
     
     def __init__(self, filename=None, device='cpu'):   
-        self.device = device
+        self.device  = device
         self.twixobj = twixtools.read_twix(filename)[-1]
         self.twixmap = twixtools.map_twix(self.twixobj)
 
@@ -106,7 +104,7 @@ class recotwix():
     def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
         # Note: this function suppose oversampling is removed
         import torch.nn.functional as F
-        print(f'kspace original shape: {kspace.shape}, scantype: {scantype}')
+        print(f'kspace original shape : {kspace.shape}, scantype: {scantype}')
         col_diff = self.hdr['Meas']['iRoFTLength']//2 - self.twixmap[scantype].kspace_center_col
         lin_diff = self.hdr['Meas']['iPEFTLength']//2 - self.twixmap[scantype].kspace_center_lin
         par_diff = self.hdr['Meas']['i3DFTLength']//2 - self.twixmap[scantype].kspace_center_par
@@ -131,7 +129,7 @@ class recotwix():
         pad[self.dim_info['Par']['ind']*2+1] = int(par_diff)
         pad.reverse()
         kspace = F.pad(kspace, pad, 'constant', 0)
-        print(f'kspace corrected shape  : {kspace.shape}, scantype: {scantype}')
+        print(f'kspace corrected shape: {kspace.shape}, scantype: {scantype}')
         return kspace
 
 
