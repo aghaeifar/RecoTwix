@@ -9,7 +9,8 @@ from recotwix import recotwix, kspace_to_image, lib_folder
 
 class recoB0(recotwix):
     img_b0   = torch.empty([1])
-    img_mag  = torch.empty([1])   
+    img_mag  = torch.empty([1]) 
+    shims_0thorder   = []  
     shims_firstorder = []
     shims_highorder  = [] 
 
@@ -27,6 +28,7 @@ class recoB0(recotwix):
             print(f"Error!\033[93mAt least two echoes are expected!\033[0m")
             return
         
+        self.shims_0thorder = [self.prot.shims['A00']]
         keys = ['X', 'Y', 'Z']
         self.shims_firstorder = [self.prot.shims[f'{key}'] for key in keys]
         keys = ['A20', 'A21', 'B21', 'A22', 'B22', 'A30', 'A31', 'B31', 'A32']
