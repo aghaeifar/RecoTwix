@@ -112,21 +112,22 @@ class recotwix():
             lin_diff = 0
         if kspace.shape[self.dim_info['Par']['ind']] == self.hdr['Meas']['i3DFTLength']:
             par_diff = 0
-        # print(f'iRoFTLength: {self.hdr["Meas"]["iRoFTLength"]}, iPEFTLength: {self.hdr["Meas"]["iPEFTLength"]}, i3DFTLength: {self.hdr["Meas"]["i3DFTLength"]}')
-        # print(f'kspace_center_col: {self.twixmap[scantype].kspace_center_col}, kspace_center_lin: {self.twixmap[scantype].kspace_center_lin}, kspace_center_par: {self.twixmap[scantype].kspace_center_par}')
-        # print(f'col_diff: {col_diff}, lin_diff: {lin_diff}, par_diff: {par_diff}')
-        # print(f'res x: {self.prot.res["x"] }')
+        
         # There might be asymmetric echo; thus, padding in the left and right differ. Note we suppose asymmetry is in the left side which should be valid in the most cases where shortening echo-time is the goal.
         col_diff_l = col_diff // 2 # because oversampling is removed before
         col_diff_r = self.prot.res['x'] - kspace.shape[self.dim_info['Col']['ind']] - col_diff_l
+        lin_diff_l = lin_diff
+        lin_diff_r = self.hdr['Meas']['iPEFTLength'] - kspace.shape[self.dim_info['Lin']['ind']] - lin_diff_l
+        par_diff_l = par_diff
+        par_diff_r = self.hdr['Meas']['i3DFTLength'] - kspace.shape[self.dim_info['Par']['ind']] - par_diff_l
 
         pad = [0] * kspace.ndim * 2
         pad[self.dim_info['Col']['ind']*2]   = int(col_diff_r)
         pad[self.dim_info['Col']['ind']*2+1] = int(col_diff_l)
-        pad[self.dim_info['Lin']['ind']*2]   = int(lin_diff)
-        pad[self.dim_info['Lin']['ind']*2+1] = int(lin_diff)
-        pad[self.dim_info['Par']['ind']*2]   = int(par_diff)
-        pad[self.dim_info['Par']['ind']*2+1] = int(par_diff)
+        pad[self.dim_info['Lin']['ind']*2]   = int(lin_diff_r)
+        pad[self.dim_info['Lin']['ind']*2+1] = int(lin_diff_l)
+        pad[self.dim_info['Par']['ind']*2]   = int(par_diff_r)
+        pad[self.dim_info['Par']['ind']*2+1] = int(par_diff_l)
         pad.reverse()
         kspace = F.pad(kspace, pad, 'constant', 0)
         print(f'kspace corrected shape: {kspace.shape}, scantype: {scantype}')
