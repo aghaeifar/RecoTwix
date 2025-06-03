@@ -219,6 +219,9 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     n_full = kspace.shape[dim_pf] 
     # mask for partial Fourier dimension taking accelleration into account
     mask    = torch.sum(torch.abs(kspace), dim_nonpf) > 0 # a mask along PF direction, considering acceleration, type: tensor
+    # mask for non-partial Fourier dimensions taking accelleration into account
+    dims_pf_nonenc = list(set(range(kspace.ndim)) - set(dim_nonpf_enc))
+    idxs_null_nonpf_enc = torch.nonzero( torch.sum(torch.abs(kspace), dims_pf_nonenc) == 0 , as_tuple=True) # index of non-pf dimensions
     
     mask_clone = mask.clone()
     ind_one = torch.nonzero(mask == True, as_tuple=True)[0] # index of mask_pf_acc, type: tensor
@@ -257,6 +260,7 @@ def POCS(kspace:torch.Tensor, dim_enc, dim_pf=1, number_of_iterations=5, device=
     mask = mask_clone
     mask[ind_one[0]%acc_pf::acc_pf] = True
     torch.moveaxis(kspace_full, dim_pf, 0)[~mask] = 0       
+    torch.moveaxis(kspace_full, dim_nonpf_enc, (0,1))[idxs_null_nonpf_enc] = 0  
 
     return kspace_full.to('cpu') 
 
