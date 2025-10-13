@@ -56,32 +56,32 @@ class recoB0(recotwix):
         if self.dim_info['Rep']['len'] > 1 :                
             self.img_b0 = self.img_b0 * torch.index_select(self.img_b0, dim_rep, idx[0]).conj()
 
-        # rescale the scale to [0,1], if not, the low signal regions will be masked out because of float32 precision
-        self.img_b0 = self.img_b0.to(torch.complex128)
-        mag_b0    = torch.abs(self.img_b0) 
-        min_value = torch.min(mag_b0)
-        max_value = torch.max(mag_b0)
-        scale = (mag_b0 - min_value) / (max_value - min_value)
-
-        # scale to diminish low signal contributions in coil combination
-        self.img_b0 = self.img_b0 * scale 
-        self.img_b0 = torch.angle(torch.sum(self.img_b0, dim=self.dim_info['Cha']['ind'], keepdims=True)).to(torch.float32) # sum over coils
-            
         self.img = torch.empty((1)) # save memory
 
     ##########################################################
-    def get_b0(self):
-        return self.img_b0
+    def get_b0(self, img_b0:torch.Tensor=None):
+        if img_b0 is None:
+            img_b0 = self.img_b0.to(torch.complex128)
+        # rescale the scale to [0,1], if not, the low signal regions will be masked out because of float32 precision
+        mag_b0    = torch.abs(img_b0) 
+        min_value = torch.min(mag_b0) 
+        max_value = torch.max(mag_b0)
+        scale = (mag_b0 - min_value) / (max_value - min_value)
+        # scale to diminish low signal contributions in coil combination
+        img_b0 = img_b0 * scale 
+        img_b0 = torch.angle(torch.sum(img_b0, dim=self.dim_info['Cha']['ind'], keepdims=True)).to(torch.float32) # sum over coils
+        return img_b0
     
     def get_mag(self):
         return self.img_mag
     
     def get_b0hz(self, b0_uw:torch.Tensor=None, offset=0):
         if b0_uw is None:
-            b0_uw = self._unwrap_b0(self.img_b0)
-        if b0_uw.shape != self.img_b0.shape:
-            print(f"\033[93mUnwrapped image is not yet calculated. \033[0m")
+            b0_uw = self.get_b0()
+        if b0_uw.ndim != self.img_b0.ndim:
+            print(f"\033[93mSize mismatch. \033[0m")
             return None
+        b0_uw = self._unwrap_b0(b0_uw)
         dTE = (self.prot.TE[1] - self.prot.TE[0]) * 1e-6 # s
         return (b0_uw + offset) / dTE / (2*PI)
 
