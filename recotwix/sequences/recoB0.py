@@ -14,7 +14,7 @@ class recoB0(recotwix):
     shims_firstorder = []
     shims_highorder  = [] 
 
-    def __init__(self, filename=None, device='cpu', method_sensitivity='caldir'):
+    def __init__(self, filename:str=None, device:str='cpu', method_sensitivity:str='caldir'):
         super().__init__(filename, device)  
         self.runReco(method_sensitivity)
 
@@ -23,7 +23,7 @@ class recoB0(recotwix):
         s += f"  TE = {self.prot.TE} μs\n"
         return s
         
-    def runReco(self, method_sensitivity='caldir'):
+    def runReco(self, method_sensitivity:str=''):
         if self.dim_info['Eco']['len'] < 2:
             print(f"Error!\033[93mAt least two echoes are expected!\033[0m")
             return
@@ -50,7 +50,7 @@ class recoB0(recotwix):
         self.img_mag = self.img_mag.index_select(dim_eco, idx[0]).index_select(dim_rep, idx[0])
 
         print(f"Calculating B0 map. \u0394TE = {(self.prot.TE[1] - self.prot.TE[0])} μs")
-        # regular B0 mapping, b0map = (Eco2 - Eco1)      self.img_mag.index_select(dim_eco, idx[1]) *      
+        # regular B0 mapping, b0map = (Eco2 - Eco1)      
         self.img_b0 =  self.img.index_select(dim_eco, idx[1]) *  self.img.index_select(dim_eco, idx[0]).conj()  
         # shims basis-map, b0map = (Eco2Repn - Eco1Repn) - (Eco2Rep1 - Eco1Rep1)
         if self.dim_info['Rep']['len'] > 1 :                

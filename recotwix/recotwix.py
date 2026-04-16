@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 import twixtools
 import numpy as np
@@ -7,7 +8,16 @@ from .protocol import protocol_parse
 from .reco_tools import POCS, coil_combination, calc_coil_sensitivity
 from .transformation import calc_nifti_affine
 
-class recotwix(): 
+class twixID():
+    filename = None
+    mid = None
+    fid = None
+    def __init__(self, filename):
+        self.filename = filename
+        self.mid = re.search(r'MID(\d+)', filename, re.IGNORECASE).group(1)
+        self.fid = re.search(r'FID(\d+)', filename, re.IGNORECASE).group(1)
+    
+class recotwix(twixID): 
     hdr      = {}
     prot     = {}
     img      = None
@@ -19,14 +29,15 @@ class recotwix():
     dim_enc  = None
     dim_free = None
     dim_size = None
-    dim_info = None
+    dim_info = {}
     transformation = None
     nii_affine     = None
     slice_reorder_ind = None
     
-    def __init__(self, filename=None, device='cpu'):   
+    def __init__(self, filename=None, device='cpu'):  
+        super().__init__(filename)   
         self.device  = device
-        self.twixobj = twixtools.read_twix(filename)[-1]
+        self.twixobj = twixtools.read_twix(filename, parse_pmu=False)[-1]
         self.twixmap = twixtools.map_twix(self.twixobj)
 
         for key in self.twixmap.keys():
@@ -58,6 +69,7 @@ class recotwix():
 
     def __str__(self):
         s = f"\n{self.__class__.__module__}.{self.__class__.__qualname__}:\n"
+        s += f"  Filename: {self.filename}\n"
         s += f"  Scans: {self.scans}\n"
         s += f"  Dims: {list(self.dim_info.keys())}\n"
         s += f"  Size: {self.dim_size}\n"
@@ -68,7 +80,7 @@ class recotwix():
         return s
 
 
-    def runReco(self, method_sensitivity='caldir'):     
+    def runReco(self, coil_combine:bool=True, method_sensitivity:str='caldir'):     
         torch.cuda.empty_cache()   
 
         kspace = self._getkspace()        
@@ -93,12 +105,17 @@ class recotwix():
             for dim_free in self.dim_free:
                 acs = acs.index_select(self.dim_info[dim_free]['ind'], torch.Tensor([0]).int()) 
 
-        if method_sensitivity is not None:
+        if coil_combine is True and method_sensitivity:
             coils_sensitivity = calc_coil_sensitivity(acs, dim_enc=self.dim_enc, method=method_sensitivity)
             self.img = coil_combination(kspace, coil_sens=coils_sensitivity, dim_enc=self.dim_enc, supress_output=True)
-        else:
+        elif coil_combine is True and not method_sensitivity:
             self.img = coil_combination(kspace, coil_sens=None, dim_enc=self.dim_enc, rss=True)
+        elif coil_combine is False:
+            self.img = coil_combination(kspace, coil_sens=None, dim_enc=self.dim_enc, rss=False)
+        else:
+            raise ValueError(f"Invalid coil_combine option '{coil_combine}'. Please choose from [True, False].")
 
+        print(f'Reconstructed image shape: {self.img.shape}')
 
     ##########################################################
     def correct_scan_size(self, kspace:torch.Tensor, scantype='image'):
@@ -112,7 +129,7 @@ class recotwix():
             lin_diff = 0
         if kspace.shape[self.dim_info['Par']['ind']] == self.hdr['Meas']['i3DFTLength']:
             par_diff = 0
-        
+            
         # There might be asymmetric echo; thus, padding in the left and right differ. Note we suppose asymmetry is in the left side which should be valid in the most cases where shortening echo-time is the goal.
         col_diff_l = col_diff // 2 # because oversampling is removed before
         col_diff_r = self.prot.res['x'] - kspace.shape[self.dim_info['Col']['ind']] - col_diff_l
