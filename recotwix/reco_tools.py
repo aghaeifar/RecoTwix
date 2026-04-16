@@ -141,13 +141,17 @@ def calc_coil_sensitivity(acs:torch.Tensor, dim_enc, method='caldir'):
     return coil_sens
 
 
-def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=False, supress_output=False):
+def coil_combination(kspace:torch.Tensor, dim_enc, coil_sens:torch.Tensor=None, rss:bool=False, supress_output:bool=False):
     print(f'Combining coils... ')
     torch.cuda.empty_cache()     
-    # sos    
-    volume       = kspace_to_image(kspace, dim_enc=dim_enc, dim_loop=fft_loop_axis)       
-    volume_comb  = torch.sqrt(torch.sum(torch.abs(volume)**2, fft_loop_axis, keepdims=True)) # is needed in 'bart' to calculate scale factor
-    if rss == False:
+       
+    volume_comb = kspace_to_image(kspace, dim_enc=dim_enc, dim_loop=fft_loop_axis) 
+
+    if rss is True:     
+        volume_comb  = torch.sqrt(torch.sum(torch.abs(volume_comb)**2, fft_loop_axis, keepdims=True))
+    
+    # is root-sum-of-square coil combination is enough, or do we need to use coil sensitivity for optimal coil combination?
+    if coil_sens is not None and rss is False:        
         recon        = list() 
         GPU          = '-g' if kspace.device == 'cuda' else ''
         l2_reg       = 1e-4
@@ -156,6 +160,7 @@ def coil_combination(kspace:torch.Tensor, coil_sens:torch.Tensor, dim_enc, rss=F
             indices = torch.linspace(0, volume_comb.numel() - 2, steps=2**24).long()
             volume_comb = volume_comb.flatten()[indices]
 
+        # we use rss image to estimate the scale factor for BART recon
         scale_factor = torch.quantile(volume_comb, 0.99, interpolation='midpoint').tolist()    
         coil_sens    = toBART(coil_sens)[0].detach().cpu().numpy()
         kspace, unflatten_shape  = toBART(kspace)
