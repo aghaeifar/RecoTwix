@@ -34,7 +34,8 @@ class recotwix(twixID):
     nii_affine     = None
     slice_reorder_ind = None
     
-    def __init__(self, filename=None, device='cpu'):  
+    def __init__(self, filename=None, device='cpu'):
+        filename = str(filename) # in case filename is a Path object  
         super().__init__(filename)   
         self.device  = device
         self.twixobj = twixtools.read_twix(filename, parse_pmu=False)[-1]
